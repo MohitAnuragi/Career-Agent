@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Career Agent</title>
+  <meta name="description" content="AI job-search agent: hybrid semantic search, personalised recommendations and a tool-using assistant over live job postings.">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◆</span>
+      <div>
+        <h1>Career Agent</h1>
+        <p id="stats" class="muted">Loading index…</p>
+      </div>
+    </div>
+    <a class="muted small" href="/docs" target="_blank" rel="noopener">API docs</a>
+  </header>
+
+  <main class="layout">
+    <!-- Profile -->
+    <section class="panel" id="profile-panel" aria-labelledby="profile-h">
+      <h2 id="profile-h">Your profile</h2>
+      <div id="profile-empty">
+        <p class="muted">Upload your resume. Only the extracted profile is stored, never the file.</p>
+        <label class="drop" for="resume-file">
+          <input id="resume-file" type="file" accept="application/pdf">
+          <span>Choose PDF</span>
+        </label>
+        <details>
+          <summary>or paste text</summary>
+          <textarea id="resume-text" rows="6" placeholder="Paste resume text…"></textarea>
+          <button id="resume-text-btn" class="btn">Analyse text</button>
+        </details>
+      </div>
+      <div id="profile-view" hidden></div>
+      <div id="prefs" hidden>
+        <h3>Preferences</h3>
+        <label class="toggle"><input type="checkbox" id="pref-india"> India only</label>
+        <label class="toggle"><input type="checkbox" id="pref-remote"> Include remote</label>
+        <p class="muted small" id="prefs-memory"></p>
+      </div>
+      <p id="profile-status" class="status" role="status"></p>
+    </section>
+
+    <!-- Jobs -->
+    <section class="panel jobs" aria-label="Jobs">
+      <nav class="tabs" role="tablist">
+        <button role="tab" class="tab active" data-tab="feed" aria-selected="true">For you</button>
+        <button role="tab" class="tab" data-tab="search" aria-selected="false">Search</button>
+        <button role="tab" class="tab" data-tab="saved" aria-selected="false">Saved</button>
+      </nav>
+
+      <div class="tabpane" id="tab-feed">
+        <div class="row">
+          <p class="muted small grow">Hybrid retrieval seeded by your profile, reranked by the LLM.</p>
+          <button class="btn ghost" id="refresh-feed">Refresh</button>
+        </div>
+        <div id="feed" class="list"><p class="muted">Upload a resume to see recommendations.</p></div>
+      </div>
+
+      <div class="tabpane" id="tab-search" hidden>
+        <form id="search-form" class="search">
+          <input id="q" type="search" placeholder="e.g. android intern, LLM backend, data engineer" required>
+          <select id="method" aria-label="Ranking method">
+            <option value="hybrid">Hybrid (RRF)</option>
+            <option value="keyword">Keyword only</option>
+            <option value="vector">Vector only</option>
+            <option value="hybrid_rerank">Hybrid + LLM rerank</option>
+          </select>
+          <label class="toggle"><input type="checkbox" id="s-india" checked> India</label>
+          <label class="toggle"><input type="checkbox" id="s-remote"> Remote</label>
+          <button class="btn">Search</button>
+        </form>
+        <div id="results" class="list"></div>
+      </div>
+
+      <div class="tabpane" id="tab-saved" hidden>
+        <div id="saved" class="list"><p class="muted">Nothing saved yet.</p></div>
+      </div>
+    </section>
+
+    <!-- Agent -->
+    <section class="panel chat" aria-labelledby="chat-h">
+      <div class="row">
+        <h2 id="chat-h" class="grow">Agent</h2>
+        <button class="btn ghost small" id="clear-chat">Clear</button>
+      </div>
+      <div id="messages" class="messages" aria-live="polite">
+        <div class="msg assistant"><div class="bubble">Ask me things like <em>“Which roles fit me best?”</em>, <em>“Only Bengaluru from now on”</em> or <em>“How well do I match the first one?”</em></div></div>
+      </div>
+      <form id="chat-form" class="chat-input">
+        <input id="chat-msg" autocomplete="off" placeholder="Message the agent…" required>
+        <button class="btn">Send</button>
+      </form>
+    </section>
+  </main>
+
+  <template id="job-tpl">
+    <article class="job">
+      <div class="job-head">
+        <a class="job-title" target="_blank" rel="noopener"></a>
+        <span class="badges"></span>
+      </div>
+      <p class="job-meta muted small"></p>
+      <p class="job-reason"></p>
+      <div class="job-actions">
+        <button class="btn ghost small" data-act="save">Save</button>
+        <button class="btn ghost small" data-act="dismiss">Not for me</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
