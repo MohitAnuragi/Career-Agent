@@ -1,0 +1,22 @@
+[
+  {"id": "q01", "query": "android developer intern kotlin", "india_only": true},
+  {"id": "q02", "query": "backend engineer python", "india_only": true},
+  {"id": "q03", "query": "machine learning engineer LLM", "india_only": false},
+  {"id": "q04", "query": "frontend engineer react typescript", "india_only": true},
+  {"id": "q05", "query": "data engineer spark pipelines", "india_only": true},
+  {"id": "q06", "query": "site reliability engineer kubernetes", "india_only": true},
+  {"id": "q07", "query": "new grad software engineer", "india_only": false},
+  {"id": "q08", "query": "product manager payments", "india_only": true},
+  {"id": "q09", "query": "security engineer cloud", "india_only": true},
+  {"id": "q10", "query": "mobile app developer", "india_only": true},
+  {"id": "q11", "query": "applied AI engineer building agents and RAG", "india_only": false},
+  {"id": "q12", "query": "java microservices developer", "india_only": true},
+  {"id": "q13", "query": "data scientist experimentation and analytics", "india_only": true},
+  {"id": "q14", "query": "devops engineer CI/CD AWS", "india_only": true},
+  {"id": "q15", "query": "UX designer", "india_only": true},
+  {"id": "q16", "query": "customer support specialist", "india_only": true},
+  {"id": "q17", "query": "database internals engineer", "india_only": false},
+  {"id": "q18", "query": "technical writer developer documentation", "india_only": false},
+  {"id": "q19", "query": "engineering manager platform team", "india_only": true},
+  {"id": "q20", "query": "entry level role for a CS student who knows DSA", "india_only": true}
+]

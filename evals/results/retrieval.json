@@ -1,0 +1,38 @@
+{
+  "judge": "gemini-3.5-flash-lite",
+  "created": "2026-11-18",
+  "results": {
+    "keyword": {
+      "ndcg@10": 0.4576,
+      "recall@20": 0.5904,
+      "mrr": 0.5642,
+      "p50_ms": 27,
+      "p95_ms": 1184,
+      "queries": 20
+    },
+    "vector": {
+      "ndcg@10": 0.6969,
+      "recall@20": 0.7401,
+      "mrr": 0.8055,
+      "p50_ms": 33,
+      "p95_ms": 86,
+      "queries": 20
+    },
+    "hybrid": {
+      "ndcg@10": 0.6222,
+      "recall@20": 0.7344,
+      "mrr": 0.7246,
+      "p50_ms": 46,
+      "p95_ms": 95,
+      "queries": 20
+    },
+    "hybrid_rerank": {
+      "ndcg@10": 0.7952,
+      "recall@20": 0.7344,
+      "mrr": 0.8821,
+      "p50_ms": 4701,
+      "p95_ms": 7757,
+      "queries": 20
+    }
+  }
+}

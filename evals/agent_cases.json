@@ -1,0 +1,17 @@
+[
+  {"message": "What jobs should I apply to?", "tool": "recommend_jobs", "args": {}},
+  {"message": "Show me the best roles for my profile", "tool": "recommend_jobs", "args": {}},
+  {"message": "Find android internships in Bengaluru", "tool": "search_jobs", "args": {"location": "Bengaluru"}},
+  {"message": "Any remote backend roles?", "tool": "search_jobs", "args": {"remote_only": true}},
+  {"message": "Search for machine learning jobs at Databricks", "tool": "search_jobs", "args": {"company": "Databricks"}},
+  {"message": "Data engineering jobs in India only please", "tool": "search_jobs", "args": {"india_only": true}},
+  {"message": "From now on only show me jobs in Gurugram", "tool": "update_preferences", "args": {"locations": ["Gurugram"]}},
+  {"message": "I never want to see roles from Paytm again", "tool": "update_preferences", "args": {"avoid_companies": ["Paytm"]}},
+  {"message": "I'm not interested in remote work", "tool": "update_preferences", "args": {"remote_ok": false}},
+  {"message": "What have I saved so far?", "tool": "list_saved_jobs", "args": {}},
+  {"message": "Save lever:cred:aa98a938-af3a-45f5-851d-966b2b5bad33 for later", "tool": "save_job", "args": {"job_id": "lever:cred:aa98a938-af3a-45f5-851d-966b2b5bad33"}},
+  {"message": "Hide greenhouse:groww:4970739101, not for me", "tool": "dismiss_job", "args": {"job_id": "greenhouse:groww:4970739101"}},
+  {"message": "How well do I match greenhouse:groww:4970739101?", "tool": "explain_match", "args": {"job_id": "greenhouse:groww:4970739101"}},
+  {"message": "Show the full description of ashby:sarvam:c0406fe0-c8c0-44aa-aa3e-b879f2bf1049", "tool": "get_job_details", "args": {"job_id": "ashby:sarvam:c0406fe0-c8c0-44aa-aa3e-b879f2bf1049"}},
+  {"message": "Write my answer to 'Why do you want to join?' for lever:cred:aa98a938-af3a-45f5-851d-966b2b5bad33", "tool": "draft_application_answer", "args": {"job_id": "lever:cred:aa98a938-af3a-45f5-851d-966b2b5bad33"}}
+]

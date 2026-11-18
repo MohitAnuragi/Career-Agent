@@ -1,0 +1,26 @@
+name: Nightly ingest
+
+# Refreshes the production index. Set the DATABASE_URL repository secret (e.g. your Supabase/Neon URL).
+on:
+  schedule:
+    - cron: "30 0 * * *"   # 06:00 IST
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/cache@v4
+        with:
+          path: .cache/fastembed   # default FASTEMBED_CACHE, relative to the checkout
+          key: fastembed-bge-small-en-v1.5
+      - run: pip install -r requirements.txt
+      - run: python -m app.ingest.pipeline
