@@ -29,6 +29,18 @@ def test_preference_boost():
     assert preference_boost(job("3"), None) == 1.0
 
 
+def test_city_aliases_and_early_career_queries():
+    from app.search import is_early_career_query, location_patterns
+
+    assert location_patterns("Bengaluru") == ["%bangalore%", "%bengaluru%"]
+    assert location_patterns(" Gurgaon ") == ["%gurgaon%", "%gurugram%"]
+    assert location_patterns("Pune") == ["%pune%"]
+    assert is_early_career_query("software engineering internships in Bengaluru")
+    assert is_early_career_query("new grad backend roles")
+    assert not is_early_career_query("internal tools engineer")
+    assert not is_early_career_query("senior backend engineer")
+
+
 def test_title_levels():
     from app.search import title_level
 

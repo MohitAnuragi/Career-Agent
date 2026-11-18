@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -13,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app import search, store
+from app import matching, search, store
 from app.agent.loop import run_agent
 from app.agent.tools import ToolContext
 from app.config import get_settings
@@ -150,6 +151,10 @@ def put_preferences(conn: Conn, user: User, prefs: Preferences):
     return {"preferences": store.set_preferences(conn, user, prefs)}
 
 
+REC_TTL = 600  # seconds
+_rec_cache: dict[tuple, tuple[float, list[dict]]] = {}
+
+
 @app.get("/api/recommendations")
 def recommendations(
     conn: Conn,
@@ -160,20 +165,25 @@ def recommendations(
     profile, vector = store.get_profile(conn, user)
     if profile is None:
         raise HTTPException(409, "Upload a resume first.")
+    prefs = store.get_preferences(conn, user)
+    dismissed = store.feedback_ids(conn, user, "dismiss")
+    # Same user + profile + preferences + hidden jobs => same reranked feed; don't pay for it again.
+    key = (user, limit, profile.model_dump_json(), prefs.model_dump_json(), tuple(sorted(dismissed)))
+    if rerank and (hit := _rec_cache.get(key)) and time.monotonic() - hit[0] < REC_TTL:
+        return {"jobs": hit[1], "cached": True}
     llm = None
     if rerank:
         store.charge_llm_call(conn, user, get_settings().daily_llm_limit)
         llm = get_llm()
     results = search.recommend(
-        conn,
-        profile,
-        vector,
-        prefs=store.get_preferences(conn, user),
-        filters=SearchFilters(exclude_job_ids=store.feedback_ids(conn, user, "dismiss")),
-        limit=limit,
-        llm=llm,
+        conn, profile, vector, prefs=prefs, filters=SearchFilters(exclude_job_ids=dismissed), limit=limit, llm=llm,
     )
-    return {"jobs": [job_out(r) for r in results]}
+    jobs = [job_out(r) for r in results]
+    if rerank:
+        if len(_rec_cache) > 500:  # crude bound; entries are small and expire anyway
+            _rec_cache.clear()
+        _rec_cache[key] = (time.monotonic(), jobs)
+    return {"jobs": jobs, "cached": False}
 
 
 @app.get("/api/search")
@@ -222,6 +232,29 @@ def feedback(conn: Conn, user: User, body: FeedbackIn):
 @app.get("/api/saved")
 def saved(conn: Conn, user: User):
     return {"jobs": [job_out(ScoredJob(job=j, score=0)) for j in store.saved_jobs(conn, user)]}
+
+
+@app.get("/api/jobs/{job_id}")
+def job_detail(conn: Conn, job_id: str):
+    job = store.get_job(conn, job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found.")
+    out = job_out(ScoredJob(job=job, score=0))
+    out["description"] = job.description[:12000]
+    out["employment_type"] = job.employment_type
+    return out
+
+
+@app.post("/api/jobs/{job_id}/match")
+def job_match(conn: Conn, user: User, job_id: str):
+    profile, _ = store.get_profile(conn, user)
+    if profile is None:
+        raise HTTPException(409, "Upload a resume first.")
+    job = store.get_job(conn, job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found.")
+    store.charge_llm_call(conn, user, get_settings().daily_llm_limit)
+    return {"job_id": job.id, **matching.explain_match(get_llm(), profile, job).model_dump()}
 
 
 class ChatIn(BaseModel):

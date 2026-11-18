@@ -2,113 +2,217 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Career Agent</title>
   <meta name="description" content="AI job-search agent: hybrid semantic search, personalised recommendations and a tool-using assistant over live job postings.">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23000'/%3E%3Cpath d='M16 7 25 16 16 25 7 16Z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
+  <div class="grid-bg" aria-hidden="true"></div>
+
+  <!-- SVG icon sprite -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12 20 4l-6 16-3-7z"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 13h6M9 17h6"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></symbol>
+  </svg>
+
   <header class="topbar">
-    <div class="brand">
-      <span class="logo" aria-hidden="true">◆</span>
-      <div>
-        <h1>Career Agent</h1>
-        <p id="stats" class="muted">Loading index…</p>
-      </div>
+    <a class="brand" href="/" aria-label="Career Agent home">
+      <span class="logo" aria-hidden="true"></span>
+      <span class="brand-name">Career<span>Agent</span></span>
+    </a>
+    <div class="live-pill" id="stats" title="Live index">
+      <span class="pulse" aria-hidden="true"></span>
+      <span><b data-count="0" id="stat-jobs">0</b> live jobs</span>
+      <span class="sep">·</span>
+      <span><b data-count="0" id="stat-companies">0</b> companies</span>
+      <span class="sep hide-sm">·</span>
+      <span class="hide-sm muted" id="stat-updated">syncing…</span>
     </div>
-    <a class="muted small" href="/docs" target="_blank" rel="noopener">API docs</a>
+    <div class="top-actions">
+      <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">
+        <svg class="icon"><use href="#i-moon"/></svg>
+      </button>
+      <a class="icon-btn hide-sm" href="/docs" target="_blank" rel="noopener" aria-label="API docs" title="API docs">
+        <svg class="icon"><use href="#i-file"/></svg>
+      </a>
+    </div>
   </header>
 
   <main class="layout">
-    <!-- Profile -->
-    <section class="panel" id="profile-panel" aria-labelledby="profile-h">
-      <h2 id="profile-h">Your profile</h2>
-      <div id="profile-empty">
-        <p class="muted">Upload your resume. Only the extracted profile is stored, never the file.</p>
-        <label class="drop" for="resume-file">
-          <input id="resume-file" type="file" accept="application/pdf">
-          <span>Choose PDF</span>
-        </label>
-        <details>
-          <summary>or paste text</summary>
-          <textarea id="resume-text" rows="6" placeholder="Paste resume text…"></textarea>
-          <button id="resume-text-btn" class="btn">Analyse text</button>
-        </details>
-      </div>
-      <div id="profile-view" hidden></div>
-      <div id="prefs" hidden>
-        <h3>Preferences</h3>
-        <label class="toggle"><input type="checkbox" id="pref-india"> India only</label>
-        <label class="toggle"><input type="checkbox" id="pref-remote"> Include remote</label>
-        <p class="muted small" id="prefs-memory"></p>
-      </div>
-      <p id="profile-status" class="status" role="status"></p>
-    </section>
+    <!-- ======================= Profile ======================= -->
+    <aside class="col-profile">
+      <section class="card profile-card reveal" id="profile-card">
+        <div id="profile-empty" class="profile-empty">
+          <div class="orb small" aria-hidden="true"></div>
+          <h2>Start with your resume</h2>
+          <p class="muted">I'll turn it into a skills profile and rank thousands of live jobs for you.</p>
+          <button class="btn primary block" id="open-upload">
+            <svg class="icon"><use href="#i-upload"/></svg> Upload resume
+          </button>
+        </div>
+        <div id="profile-view" hidden></div>
+      </section>
 
-    <!-- Jobs -->
-    <section class="panel jobs" aria-label="Jobs">
-      <nav class="tabs" role="tablist">
+      <section class="card prefs-card reveal" id="prefs" hidden>
+        <h3>Preferences</h3>
+        <label class="switch"><input type="checkbox" id="pref-india"><span class="track"><span class="thumb"></span></span> India only</label>
+        <label class="switch"><input type="checkbox" id="pref-remote" checked><span class="track"><span class="thumb"></span></span> Include remote</label>
+        <div class="memory">
+          <div class="memory-title"><svg class="icon"><use href="#i-brain"/></svg> What the agent remembers</div>
+          <ul id="memory-list"></ul>
+        </div>
+      </section>
+    </aside>
+
+    <!-- ======================= Jobs ======================= -->
+    <section class="col-jobs">
+      <!-- Onboarding / dropzone -->
+      <section class="hero card reveal" id="onboarding">
+        <div class="hero-copy">
+          <span class="eyebrow"><svg class="icon"><use href="#i-sparkle"/></svg> AI career agent</span>
+          <h1>Find the roles you'd actually <em class="serif">get.</em></h1>
+          <p class="muted">Upload your resume. The agent reads it, searches live openings from top companies, and explains every match.</p>
+        </div>
+        <label class="dropzone" id="dropzone" for="resume-file">
+          <input id="resume-file" type="file" accept="application/pdf">
+          <span class="dz-icon"><svg class="icon"><use href="#i-upload"/></svg></span>
+          <span class="dz-title">Drop your resume PDF here</span>
+          <span class="dz-sub muted">or click to browse · max 2 MB · only the extracted profile is stored</span>
+        </label>
+        <details class="paste">
+          <summary>Paste resume text instead</summary>
+          <textarea id="resume-text" rows="6" placeholder="Paste your resume…"></textarea>
+          <button class="btn primary" id="resume-text-btn">Analyse text</button>
+        </details>
+        <ol class="steps">
+          <li><span>1</span> Structured profile from your resume</li>
+          <li><span>2</span> Hybrid semantic search over live jobs</li>
+          <li><span>3</span> AI reranking with a reason for each match</li>
+        </ol>
+      </section>
+
+      <nav class="tabs" role="tablist" id="tabs">
+        <span class="tab-indicator" aria-hidden="true"></span>
         <button role="tab" class="tab active" data-tab="feed" aria-selected="true">For you</button>
         <button role="tab" class="tab" data-tab="search" aria-selected="false">Search</button>
-        <button role="tab" class="tab" data-tab="saved" aria-selected="false">Saved</button>
+        <button role="tab" class="tab" data-tab="saved" aria-selected="false">Saved <span class="count" id="saved-count">0</span></button>
       </nav>
 
       <div class="tabpane" id="tab-feed">
-        <div class="row">
-          <p class="muted small grow">Hybrid retrieval seeded by your profile, reranked by the LLM.</p>
-          <button class="btn ghost" id="refresh-feed">Refresh</button>
+        <div class="pane-head">
+          <p class="muted small feed-status" id="feed-status">Ranked against your profile</p>
+          <button class="btn ghost small" id="refresh-feed"><svg class="icon"><use href="#i-sparkle"/></svg> Refresh</button>
         </div>
-        <div id="feed" class="list"><p class="muted">Upload a resume to see recommendations.</p></div>
+        <div id="feed" class="list"></div>
       </div>
 
       <div class="tabpane" id="tab-search" hidden>
-        <form id="search-form" class="search">
-          <input id="q" type="search" placeholder="e.g. android intern, LLM backend, data engineer" required>
-          <select id="method" aria-label="Ranking method">
-            <option value="hybrid">Hybrid (RRF)</option>
-            <option value="keyword">Keyword only</option>
-            <option value="vector">Vector only</option>
-            <option value="hybrid_rerank">Hybrid + LLM rerank</option>
-          </select>
-          <label class="toggle"><input type="checkbox" id="s-india" checked> India</label>
-          <label class="toggle"><input type="checkbox" id="s-remote"> Remote</label>
-          <button class="btn">Search</button>
+        <form id="search-form" class="searchbar">
+          <svg class="icon"><use href="#i-search"/></svg>
+          <input id="q" type="search" placeholder="Try “backend python”, “ML engineer”, “android intern”" autocomplete="off" required>
+          <button class="btn primary">Search</button>
         </form>
+        <div class="search-controls">
+          <div class="segmented" id="method" role="radiogroup" aria-label="Ranking method">
+            <span class="seg-indicator" aria-hidden="true"></span>
+            <button type="button" class="seg active" data-value="hybrid" role="radio" aria-checked="true">Hybrid</button>
+            <button type="button" class="seg" data-value="keyword" role="radio" aria-checked="false">Keyword</button>
+            <button type="button" class="seg" data-value="vector" role="radio" aria-checked="false">Vector</button>
+            <button type="button" class="seg" data-value="hybrid_rerank" role="radio" aria-checked="false">+ AI rerank</button>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-india" checked><span class="track"><span class="thumb"></span></span> India</label>
+          <label class="switch"><input type="checkbox" id="s-remote"><span class="track"><span class="thumb"></span></span> Remote</label>
+        </div>
         <div id="results" class="list"></div>
       </div>
 
       <div class="tabpane" id="tab-saved" hidden>
-        <div id="saved" class="list"><p class="muted">Nothing saved yet.</p></div>
+        <div id="saved" class="list"></div>
       </div>
     </section>
 
-    <!-- Agent -->
-    <section class="panel chat" aria-labelledby="chat-h">
-      <div class="row">
-        <h2 id="chat-h" class="grow">Agent</h2>
-        <button class="btn ghost small" id="clear-chat">Clear</button>
-      </div>
+    <!-- ======================= Agent ======================= -->
+    <section class="col-chat card" id="chat" aria-labelledby="chat-h">
+      <header class="chat-head">
+        <div class="orb" aria-hidden="true"></div>
+        <div class="grow">
+          <h2 id="chat-h">Agent</h2>
+          <p class="muted small" id="agent-status">Searches, compares and remembers</p>
+        </div>
+        <button class="icon-btn" id="clear-chat" aria-label="Clear conversation" title="Clear conversation"><svg class="icon"><use href="#i-trash"/></svg></button>
+        <button class="icon-btn only-sm" id="close-chat" aria-label="Close agent"><svg class="icon"><use href="#i-x"/></svg></button>
+      </header>
       <div id="messages" class="messages" aria-live="polite">
-        <div class="msg assistant"><div class="bubble">Ask me things like <em>“Which roles fit me best?”</em>, <em>“Only Bengaluru from now on”</em> or <em>“How well do I match the first one?”</em></div></div>
+        <div class="welcome" id="welcome">
+          <p>Hi! I can search live jobs, explain how well you match, remember your preferences and draft application answers.</p>
+          <div class="suggestions" id="suggestions">
+            <button class="chip-btn">Which roles fit me best?</button>
+            <button class="chip-btn">Find software internships in Bengaluru</button>
+            <button class="chip-btn">Only show me remote jobs from now on</button>
+            <button class="chip-btn">How well do I match the top one?</button>
+          </div>
+        </div>
       </div>
-      <form id="chat-form" class="chat-input">
-        <input id="chat-msg" autocomplete="off" placeholder="Message the agent…" required>
-        <button class="btn">Send</button>
+      <form id="chat-form" class="composer">
+        <input id="chat-msg" autocomplete="off" placeholder="Ask the agent…" required>
+        <button class="send" aria-label="Send"><svg class="icon"><use href="#i-send"/></svg></button>
       </form>
     </section>
   </main>
 
+  <button class="fab only-sm" id="open-chat" aria-label="Open agent"><svg class="icon"><use href="#i-chat"/></svg></button>
+
+  <!-- Job detail drawer -->
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer" id="drawer" aria-hidden="true" aria-labelledby="d-title">
+    <button class="icon-btn drawer-close" id="drawer-close" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button>
+    <div id="drawer-body"></div>
+  </aside>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
   <template id="job-tpl">
-    <article class="job">
-      <div class="job-head">
-        <a class="job-title" target="_blank" rel="noopener"></a>
-        <span class="badges"></span>
+    <article class="job" tabindex="0">
+      <div class="avatar"></div>
+      <div class="job-main">
+        <div class="job-top">
+          <div>
+            <h3 class="job-title"></h3>
+            <p class="job-company"></p>
+          </div>
+          <div class="ring" hidden><svg viewBox="0 0 36 36"><circle class="ring-bg" cx="18" cy="18" r="15.5"/><circle class="ring-fg" cx="18" cy="18" r="15.5"/></svg><b></b></div>
+        </div>
+        <div class="tags"></div>
+        <p class="why" hidden><svg class="icon"><use href="#i-sparkle"/></svg><span></span></p>
+        <div class="ranks" hidden></div>
       </div>
-      <p class="job-meta muted small"></p>
-      <p class="job-reason"></p>
       <div class="job-actions">
-        <button class="btn ghost small" data-act="save">Save</button>
-        <button class="btn ghost small" data-act="dismiss">Not for me</button>
+        <button class="icon-btn save" aria-label="Save job" title="Save"><svg class="icon"><use href="#i-bookmark"/></svg></button>
+        <button class="icon-btn dismiss" aria-label="Not for me" title="Not for me"><svg class="icon"><use href="#i-x"/></svg></button>
       </div>
     </article>
   </template>

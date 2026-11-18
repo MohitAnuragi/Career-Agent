@@ -6,9 +6,9 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field, ValidationError
 
-from app import search, store
+from app import matching, search, store
 from app.llm.base import LLM, ToolSpec
-from app.models import CandidateProfile, Job, MatchExplanation, Preferences, ScoredJob, SearchFilters
+from app.models import CandidateProfile, Job, Preferences, ScoredJob, SearchFilters
 
 
 class ToolError(Exception):
@@ -123,16 +123,7 @@ def get_job_details(ctx: ToolContext, a: JobIdArgs) -> dict:
 def explain_match(ctx: ToolContext, a: JobIdArgs) -> dict:
     profile, job = _need_profile(ctx), _need_job(ctx, a.job_id)
     ctx.charge()
-    prompt = (
-        f"<profile>{profile.model_dump_json()}</profile>\n"
-        f"<job>{job.title} at {job.company}\n{job.description[:4000]}</job>\n"
-        "Compare the candidate to the job's stated requirements."
-    )
-    result = ctx.llm.structured(
-        prompt,
-        MatchExplanation,
-        system="You are a blunt, accurate career advisor. Only list skills the job text actually asks for.",
-    )
+    result = matching.explain_match(ctx.llm, profile, job)
     return {"job_id": job.id, **result.model_dump()}
 
 

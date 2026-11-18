@@ -24,6 +24,30 @@ JOB_COLS = (
 )
 _TOKEN = re.compile(r"[a-z0-9]+")
 
+# Postings use old and new city names interchangeably ("Bangalore" vs "Bengaluru").
+CITY_ALIASES = [
+    {"bengaluru", "bangalore"},
+    {"gurugram", "gurgaon"},
+    {"mumbai", "bombay"},
+    {"delhi", "new delhi", "ncr"},
+    {"chennai", "madras"},
+    {"kolkata", "calcutta"},
+]
+# A typed query asking for early-career roles ("internships in Pune", "new grad roles").
+_EARLY_QUERY = re.compile(r"\b(interns?|internships?|new grads?|graduates?|freshers?|entry[- ]level|trainees?)\b", re.I)
+
+
+def location_patterns(location: str) -> list[str]:
+    loc = location.lower().strip()
+    for group in CITY_ALIASES:
+        if loc in group:
+            return [f"%{name}%" for name in sorted(group)]
+    return [f"%{loc}%"]
+
+
+def is_early_career_query(query: str) -> bool:
+    return bool(_EARLY_QUERY.search(query))
+
 
 # ---------------------------------------------------------------- SQL helpers
 def _where(f: SearchFilters) -> tuple[str, list]:
@@ -33,8 +57,8 @@ def _where(f: SearchFilters) -> tuple[str, list]:
     if f.remote_only:
         clauses.append("is_remote")
     if f.location:
-        clauses.append("location ILIKE %s")
-        params.append(f"%{f.location}%")
+        clauses.append("location ILIKE ANY(%s)")
+        params.append(location_patterns(f.location))
     if f.company:
         clauses.append("company ILIKE %s")
         params.append(f"%{f.company}%")
@@ -136,14 +160,17 @@ def title_level(title: str) -> int | None:
     return None  # no level word: usually mid-level, treat as neutral
 
 
-def seniority_fit(job: Job, profile: CandidateProfile | None) -> float:
-    """Demote roles far above the candidate's level; a student shouldn't see 'Staff Engineer' first."""
-    if profile is None:
+def seniority_fit(job: Job, profile: CandidateProfile | None, *, target_level: int | None = None) -> float:
+    """Demote roles far above the candidate's level; a student shouldn't see 'Staff Engineer' first.
+
+    The level comes from the profile, or from the query itself ("internships ...") when there's no profile.
+    """
+    have = _PROFILE_LEVEL[profile.seniority] if profile else target_level
+    if have is None:
         return 1.0
     level = title_level(job.title)
     if level is None:
         return 1.0
-    have = _PROFILE_LEVEL[profile.seniority]
     if have == 0 and level == 1:  # final-year students are a fit for new-grad roles
         level = 0
     gap = level - have
@@ -181,8 +208,12 @@ def search(
     s = get_settings()
     filters = apply_preferences(filters or SearchFilters(), prefs)
     pool = max(s.candidate_pool, limit)
+    early_query = is_early_career_query(query)
+    early_career = early_career or early_query
+    # "internships" stems to 'internship', which doesn't match titles saying "Intern"
+    kw_query = f"{query} intern" if early_query else query
 
-    kw = keyword_search(conn, query, filters, pool) if method != "vector" else []
+    kw = keyword_search(conn, kw_query, filters, pool) if method != "vector" else []
     vec: list[str] = []
     extra: list[list[str]] = []
     if method != "keyword":
@@ -214,7 +245,8 @@ def search(
         results.append(
             ScoredJob(
                 job=job,
-                score=score * preference_boost(job, prefs) * seniority_fit(job, profile),
+                score=score * preference_boost(job, prefs)
+                * seniority_fit(job, profile, target_level=0 if early_query else None),
                 keyword_rank=kw_rank.get(doc_id),
                 vector_rank=vec_rank.get(doc_id),
             )
@@ -232,7 +264,8 @@ def search(
 RERANK_SYSTEM = (
     "You rank job postings for a job seeker. Judge fit on required skills, seniority and role type. "
     "Students and new grads are a poor fit for roles needing 5+ years. Use only the text given; never invent "
-    "requirements. Return every job id exactly once."
+    "requirements. Return every job id exactly once. Write each reason to the job seeker in the second person "
+    "('you'), naming the concrete skills or requirements that drive the score; use the full 0-10 range."
 )
 
 

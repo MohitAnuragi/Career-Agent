@@ -195,7 +195,8 @@ Postgres + pgvector (`career_agent_test`) and the real embedding model.
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` |
 | `FASTEMBED_CACHE` | `/tmp/fastembed` (the only writable path on Vercel; the model downloads there on a cold start) |
 | `DB_POOL_MAX` | `3` |
-| `DAILY_LLM_LIMIT` | `40` |
+| `DAILY_LLM_LIMIT` | `40` (per user) |
+| `GLOBAL_DAILY_LLM_LIMIT` | `800` (all users combined; protects the free-tier quota) |
 
 Ingestion runs in GitHub Actions, not on Vercel: functions stop after 60 s, and a full first ingest takes several minutes.
 

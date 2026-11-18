@@ -6,6 +6,7 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
+from app.config import get_settings
 from app.models import CandidateProfile, Job, Preferences
 from app.search import JOB_COLS
 
@@ -137,15 +138,26 @@ def clear_messages(conn, user_id: str) -> None:
 
 
 # ---------------------------------------------------------------- cost control
-def charge_llm_call(conn, user_id: str, limit: int, calls: int = 1) -> int:
-    """Atomically count LLM calls per user per day; raises RateLimited past the cap."""
+def charge_llm_call(conn, user_id: str, limit: int, calls: int = 1, global_limit: int | None = None) -> int:
+    """Atomically count LLM calls per user and across all users per day; raises RateLimited past either cap."""
+    if global_limit is None:
+        global_limit = get_settings().global_daily_llm_limit
+    today = date.today()
     row = conn.execute(
         """INSERT INTO llm_usage (user_id, day, calls) VALUES (%s, %s, %s)
            ON CONFLICT (user_id, day) DO UPDATE SET calls = llm_usage.calls + EXCLUDED.calls
            RETURNING calls""",
-        [user_id, date.today(), calls],
+        [user_id, today, calls],
+    ).fetchone()
+    total = conn.execute(
+        """INSERT INTO llm_usage_global (day, calls) VALUES (%s, %s)
+           ON CONFLICT (day) DO UPDATE SET calls = llm_usage_global.calls + EXCLUDED.calls
+           RETURNING calls""",
+        [today, calls],
     ).fetchone()
     conn.commit()
     if row["calls"] > limit:
         raise RateLimited(f"Daily AI limit of {limit} requests reached. It resets tomorrow.")
+    if global_limit and total["calls"] > global_limit:
+        raise RateLimited("This demo has used today's shared AI budget. Search still works; AI features return tomorrow.")
     return row["calls"]

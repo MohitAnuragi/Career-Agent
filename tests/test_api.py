@@ -28,8 +28,11 @@ def test_full_flow(client):
     prof = client.post("/api/profile", headers=h, data={"text": RESUME}).json()["profile"]
     assert "Kotlin" in prof["skills"] and prof["seniority"] == "intern"
 
-    recs = client.get("/api/recommendations", headers=h).json()["jobs"]
+    first = client.get("/api/recommendations", headers=h).json()
+    recs = first["jobs"]
     assert "lever:cred:aa-1" in [j["id"] for j in recs[:2]]  # Android intern near the top for an Android resume
+    again = client.get("/api/recommendations", headers=h).json()
+    assert not first["cached"] and again["cached"] and again["jobs"] == recs  # reload costs no AI call
 
     s = client.get("/api/search", params={"q": "LLM agents", "india_only": True}).json()["jobs"]
     assert s[0]["id"] == "ashby:sarvam:ab-1"
@@ -39,6 +42,12 @@ def test_full_flow(client):
     client.post("/api/feedback", headers=h, json={"job_id": recs[0]["id"], "action": "dismiss"})
     recs2 = client.get("/api/recommendations", headers=h).json()["jobs"]
     assert recs[0]["id"] not in {j["id"] for j in recs2}
+
+    detail = client.get("/api/jobs/ashby:sarvam:ab-1").json()
+    assert "tool calling" in detail["description"]
+    assert client.get("/api/jobs/nope:x:1").status_code == 404
+    match = client.post("/api/jobs/lever:cred:aa-1/match", headers=h).json()
+    assert match["verdict"] in {"strong", "moderate", "weak"} and "Kotlin" in match["matching_skills"]
 
     chat = client.post("/api/chat", headers=h, json={"message": "android developer"}).json()
     assert chat["trace"][0]["tool"] == "search_jobs" and chat["trace"][0]["ok"]

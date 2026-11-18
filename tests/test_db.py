@@ -43,6 +43,10 @@ def test_filters_preferences_and_feedback(seeded):
     india = search.search(conn, "sales account executive", filters=SearchFilters(india_only=True), limit=10)
     assert "greenhouse:groww:102" not in {r.job.id for r in india}  # Indianapolis
 
+    # the Android intern is listed in "Bangalore"; asking for Bengaluru must still find it
+    blr = search.search(conn, "android internships", filters=SearchFilters(location="Bengaluru"), limit=5)
+    assert blr and blr[0].job.id == "lever:cred:aa-1"
+
     prefs = Preferences(avoid_companies=["CRED"], remote_ok=False)
     ids = {r.job.id for r in search.search(conn, "engineer developer", prefs=prefs, limit=10)}
     assert "lever:cred:aa-1" not in ids and "ashby:sarvam:ab-1" not in ids
@@ -66,3 +70,11 @@ def test_daily_llm_cap(conn):
     assert store.charge_llm_call(conn, uid, limit=2) == 2
     with pytest.raises(store.RateLimited):
         store.charge_llm_call(conn, uid, limit=2)
+
+
+def test_global_llm_cap_stops_many_anonymous_users(conn):
+    # each fresh user is under their own cap, but the shared budget still runs out
+    for _ in range(3):
+        store.charge_llm_call(conn, store.create_user(conn), limit=10, global_limit=3)
+    with pytest.raises(store.RateLimited, match="shared"):
+        store.charge_llm_call(conn, store.create_user(conn), limit=10, global_limit=3)

@@ -69,6 +69,12 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     PRIMARY KEY (user_id, day)
 );
 
+-- Shared daily budget across all users: anonymous sign-up is free, so a per-user cap alone can be bypassed.
+CREATE TABLE IF NOT EXISTS llm_usage_global (
+    day   DATE PRIMARY KEY,
+    calls INT NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id          BIGSERIAL PRIMARY KEY,
     started_at  TIMESTAMPTZ NOT NULL DEFAULT now(),

@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     embedding_dim: int = 384
     fastembed_cache: str = ".cache/fastembed"
 
-    daily_llm_limit: int = 40
+    daily_llm_limit: int = 40  # per user
+    global_daily_llm_limit: int = 800  # all users combined; protects the free-tier quota on a public URL
     admin_token: str = ""
 
     # Retrieval knobs

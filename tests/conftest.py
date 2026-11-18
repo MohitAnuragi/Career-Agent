@@ -9,7 +9,7 @@ os.environ["DAILY_LLM_LIMIT"] = "1000"
 
 import pytest  # noqa: E402
 
-TABLES = "llm_usage, messages, feedback, users, ingest_runs, jobs"
+TABLES = "llm_usage_global, llm_usage, messages, feedback, users, ingest_runs, jobs"
 
 
 @pytest.fixture(scope="session")
