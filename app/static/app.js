@@ -19,10 +19,19 @@ async function api(path, opts = {}) {
     headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(opts.json);
   }
-  const res = await fetch(path, { ...opts, headers });
+  let res;
+  try {
+    res = await fetch(path, { ...opts, headers });
+  } catch {
+    throw Object.assign(new Error("Can't reach the server. Check your connection and try again."), { status: 0 });
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = typeof data.detail === "string" ? data.detail : `Request failed (${res.status})`;
+    const friendly = {
+      502: "The AI service is busy right now. Please try again in a moment.",
+      504: "The server took too long (it may have been waking up). Please try again.",
+    };
+    const msg = typeof data.detail === "string" ? data.detail : friendly[res.status] || `Request failed (${res.status})`;
     throw Object.assign(new Error(msg), { status: res.status });
   }
   return data;

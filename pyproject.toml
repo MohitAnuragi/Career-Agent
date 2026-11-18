@@ -24,3 +24,7 @@ dependencies = [
 # Vercel: the FastAPI app lives in app/api.py, which isn't one of the auto-detected filenames.
 [tool.vercel]
 entrypoint = "app.api:app"
+
+# Runs after dependencies are installed: bundles the embedding model so cold starts don't download it.
+[tool.vercel.scripts]
+build = "python scripts/fetch_model.py"

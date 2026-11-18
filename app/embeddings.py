@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Iterable
 
 import numpy as np
@@ -13,11 +14,19 @@ QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 MAX_CHARS = 2000  # ~512 tokens; the head of a posting (title, team, requirements) carries most signal
 
 
+# Filled by scripts/fetch_model.py at build time (Vercel). Absent locally/in Docker, which use the download cache.
+BUNDLED_MODEL = Path(__file__).resolve().parent.parent / "models" / "bge-small-en-v1.5"
+
+
 @lru_cache
 def _model():
     from fastembed import TextEmbedding
 
     s = get_settings()
+    if (BUNDLED_MODEL / "model_optimized.onnx").exists():
+        # Load straight from the deployment bundle: no network, about a second on a cold start.
+        return TextEmbedding(model_name=s.embedding_model, specific_model_path=str(BUNDLED_MODEL),
+                             cache_dir=s.fastembed_cache)
     return TextEmbedding(model_name=s.embedding_model, cache_dir=s.fastembed_cache)
 
 

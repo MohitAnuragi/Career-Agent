@@ -4,12 +4,15 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import httpx
 from google import genai
 from google.genai import errors, types
 
 from app.llm.base import LLMError, T, ToolCall, ToolSpec, Turn
 
 RETRYABLE = {429, 500, 503}
+REQUEST_TIMEOUT_MS = 25_000  # per HTTP call
+TOTAL_BUDGET_S = 45  # all attempts of one logical call, including backoff
 
 
 class GeminiLLM:
@@ -18,24 +21,28 @@ class GeminiLLM:
     def __init__(self, api_key: str, model: str):
         if not api_key:
             raise LLMError("GEMINI_API_KEY is not set (or use LLM_PROVIDER=fake for offline mode)")
-        self.client = genai.Client(api_key=api_key)
+        # Cap each HTTP call so one slow response can't hang a user's request.
+        self.client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
         self.model = model
 
     # ------------------------------------------------------------------ helpers
     def _call(self, contents: Any, config: types.GenerateContentConfig) -> types.GenerateContentResponse:
-        # Free-tier keys regularly see 429 (rate limit) and 503 (model overloaded); both clear within seconds
-        # to a minute, so back off exponentially: 3 + 6 + 12 + 24 s before giving up.
-        delay, attempts = 3.0, 5
-        for attempt in range(attempts):
+        # Free-tier keys regularly see 429 (rate limit), 503 (overloaded) and slow responses. Retry with backoff,
+        # but within a total time budget, so a request always ends well before the host's timeout.
+        deadline = time.monotonic() + TOTAL_BUDGET_S
+        delay = 2.0
+        while True:
             try:
                 return self.client.models.generate_content(model=self.model, contents=contents, config=config)
             except errors.APIError as e:
-                if e.code in RETRYABLE and attempt < attempts - 1:
-                    time.sleep(delay)
-                    delay *= 2
-                    continue
-                raise LLMError(f"Gemini error {e.code}: {e.message}") from e
-        raise LLMError("unreachable")
+                retryable, reason = e.code in RETRYABLE, f"Gemini error {e.code}: {e.message}"
+                cause: Exception = e
+            except httpx.TransportError as e:  # includes timeouts
+                retryable, reason, cause = True, f"Gemini did not respond in time ({type(e).__name__})", e
+            if not retryable or time.monotonic() + delay >= deadline:
+                raise LLMError(reason) from cause
+            time.sleep(delay)
+            delay *= 2
 
     # ------------------------------------------------------------------ structured / text
     def structured(self, prompt: str, schema: type[T], *, system: str | None = None) -> T:
