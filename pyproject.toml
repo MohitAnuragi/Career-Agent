@@ -1,0 +1,26 @@
+[project]
+name = "career-agent"
+version = "1.0.0"
+description = "AI job-search agent: hybrid semantic search, personalised recommendations and a tool-using assistant"
+requires-python = ">=3.11"
+# Keep in sync with requirements.txt (used by the Docker image).
+dependencies = [
+    "fastapi==0.163.2",
+    "uvicorn[standard]==0.54.0",
+    "pydantic==2.14.3",
+    "pydantic-settings==2.16.3",
+    "psycopg[binary]==3.3.9",
+    "psycopg-pool==3.3.3",
+    "pgvector==0.5.1",
+    "httpx==0.28.1",
+    "google-genai==3.5.0",
+    "fastembed==0.9.1",
+    "numpy==2.4.6",
+    "pypdf==7.1.0",
+    "python-multipart==0.0.34",
+    "beautifulsoup4==4.15.0",
+]
+
+# Vercel: the FastAPI app lives in app/api.py, which isn't one of the auto-detected filenames.
+[tool.vercel]
+entrypoint = "app.api:app"

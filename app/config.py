@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql://career:career@localhost:5432/career_agent"
+    db_pool_max: int = 10  # keep small (e.g. 3) on serverless hosts, where every instance opens its own pool
 
     llm_provider: str = "gemini"  # "gemini" | "fake"
     gemini_api_key: str = ""

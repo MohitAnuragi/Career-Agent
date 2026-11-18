@@ -178,10 +178,26 @@ Postgres + pgvector (`career_agent_test`) and the real embedding model.
 | Piece | Free option |
 |---|---|
 | Postgres + pgvector | [Supabase](https://supabase.com) or [Neon](https://neon.tech) (both ship pgvector) |
-| API + UI | [Render](https://render.com) web service from the `Dockerfile` (reads `$PORT`) |
+| API + UI | [Vercel](https://vercel.com) (FastAPI preset; `pyproject.toml` sets the entrypoint), or [Render](https://render.com) from the `Dockerfile` |
 | Nightly ingest | [.github/workflows/ingest.yml](.github/workflows/ingest.yml) with a `DATABASE_URL` repo secret |
 
-Set `DATABASE_URL`, `GEMINI_API_KEY` and `DAILY_LLM_LIMIT` on the web service. The schema is created on first boot.
+1. **Database:** create a Supabase project and copy the **pooler** connection string (Connect → Session or
+   Transaction pooler). The direct host is IPv6-only and can't be reached from Vercel or GitHub Actions.
+2. **Index:** add that URL as the `DATABASE_URL` repository secret, then run *Actions → Nightly ingest → Run workflow*
+   once. It creates the schema and loads the jobs.
+3. **API:** import the repo on Vercel with the FastAPI preset and set these environment variables:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | the same pooler URL |
+| `GEMINI_API_KEY` | your key |
+| `LLM_PROVIDER` | `gemini` |
+| `GEMINI_MODEL` | `gemini-3.1-flash-lite` |
+| `FASTEMBED_CACHE` | `/tmp/fastembed` (the only writable path on Vercel; the model downloads there on a cold start) |
+| `DB_POOL_MAX` | `3` |
+| `DAILY_LLM_LIMIT` | `40` |
+
+Ingestion runs in GitHub Actions, not on Vercel: functions stop after 60 s, and a full first ingest takes several minutes.
 
 ## API
 

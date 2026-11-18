@@ -34,8 +34,10 @@ def get_pool(url: str | None = None) -> ConnectionPool:
         _pools[url] = ConnectionPool(
             url,
             min_size=1,
-            max_size=10,
-            kwargs={"row_factory": dict_row},
+            max_size=get_settings().db_pool_max,
+            # prepare_threshold=None: no server-side prepared statements, which transaction-mode
+            # poolers (Supabase/Neon pgbouncer, used by serverless hosts) don't support.
+            kwargs={"row_factory": dict_row, "prepare_threshold": None},
             configure=_configure,
             open=True,
         )
