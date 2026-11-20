@@ -24,13 +24,16 @@ Python · FastAPI · PostgreSQL + pgvector · Gemini (tool calling + structured 
 
 ## Overview
 
-Career Agent pulls thousands of real job postings every night from the public Greenhouse, Lever and Ashby job-board
-APIs, indexes them for keyword **and** semantic search, and matches them against a candidate's resume.
+Career Agent pulls thousands of real job postings twice a day from the public Greenhouse, Lever, Ashby, Workable,
+SmartRecruiters and Recruitee job-board APIs, keeps only the **last 30 days** (shown: the last 14 by default), indexes
+them for keyword **and** semantic search, and matches them against a candidate's resume.
 
 - Upload a resume. An LLM turns it into a **validated, structured profile** (JSON-schema constrained output).
 - Get a **personalised feed** built from hybrid retrieval, preference boosts and an LLM reranker that explains each match.
 - Chat with an **agent** that calls tools to search, explain fit, save or hide jobs, draft application answers and
   **remember preferences** ("only Bengaluru from now on") across sessions.
+- Filter by **city** (Bengaluru, Hyderabad, Pune, Delhi NCR, Mumbai, Chennai, ...) and by **how recent** a posting is
+  (this week / last two weeks / last 30 days).
 - **Measure it**: retrieval metrics (nDCG@10, Recall@20, MRR) across methods, plus an agent tool-selection eval.
 
 > No scraping: every source is an official, unauthenticated public job-board API.
@@ -39,11 +42,12 @@ APIs, indexes them for keyword **and** semantic search, and matches them against
 
 ```mermaid
 flowchart LR
-    subgraph Ingestion["Nightly ingestion (GitHub Actions)"]
-        GH[Greenhouse API] --> N[Normalise<br/>HTML→text, India/remote]
-        LV[Lever API] --> N
-        AB[Ashby API] --> N
-        N --> H{content hash<br/>changed?}
+    subgraph Ingestion["Ingestion, twice daily (GitHub Actions)"]
+        GH[Greenhouse · Lever · Ashby] --> N[Normalise<br/>HTML→text, cities, remote scope]
+        WK[Workable · SmartRecruiters · Recruitee] --> N
+        N --> F{posted ≤ 30 days<br/>India or open remote?}
+        F -- no --> D[drop]
+        F -- yes --> H{content hash<br/>changed?}
         H -- new/changed --> E[Embed<br/>BGE-small ONNX]
         H -- unchanged --> T[touch last_seen]
         H -- disappeared --> X[mark inactive]
@@ -69,13 +73,28 @@ flowchart LR
 ## How it works
 
 ### 1. Incremental ingestion ([app/ingest/](app/ingest/))
-- 33 company boards across three ATS providers ([boards.json](app/ingest/boards.json); add one line to add a company).
+- Company boards across six ATS providers ([boards.json](app/ingest/boards.json); add one line to add a company).
+  [scripts/discover_boards.py](scripts/discover_boards.py) finds the official board for each company in
+  [data/companies.csv](data/companies.csv) (careers-page links first, then slug guesses, verified through the same
+  fetchers) and writes candidates for review. It never edits boards.json itself.
 - Each source has its own normaliser. Real-world quirks handled: Greenhouse returns HTML-*escaped* HTML; Lever often
-  leaves `descriptionPlain` empty and puts the posting in `lists`; Ashby has unlisted postings. India detection uses
-  word boundaries so "Indianapolis, Indiana" isn't tagged as India.
+  leaves `descriptionPlain` empty and puts the posting in `lists`; Ashby has unlisted postings; Workable lists a job
+  once per location under the same shortcode; SmartRecruiters needs a second call per posting for the description.
+- **Cities:** one table ([cities.py](app/ingest/cities.py)) maps aliases to canonical names (Bangalore → Bengaluru,
+  Gurgaon → Gurugram) and tags regions (Gurugram/Noida/Delhi → **Delhi NCR**). India detection uses word boundaries,
+  so "Indianapolis, Indiana" isn't tagged as India.
+- **Remote scope:** remote roles are tagged `india` / `global` / `unspecified` / `restricted`; roles limited to other
+  countries ("Remote - US") are dropped.
+- **Posted date:** the ATS publish date, never an "updated" date (an edit would make an old job look new). Without one,
+  the date is when we first saw the job, but only if the board was already being ingested; on a board's first
+  ingest that date says nothing, so the job is marked *undated* and hidden by default. Postings older than 30 days
+  are not stored, and stored ones expire past 30 days.
 - **Change detection:** each posting gets a SHA-256 over the fields that affect search. Unchanged postings are only
   touched; changed ones lose their embedding and are re-embedded; postings that vanished are marked inactive.
-  A board that fails to fetch is skipped, so a network error never mass-expires a company's jobs.
+  A board that fails to fetch is skipped, so a network error never mass-expires a company's jobs. Seven failed runs
+  in a row disable a board (`boards` table, listed in `/api/stats`). Inactive jobs unseen for 60 days are deleted,
+  except ones a user saved or dismissed.
+- Requests are limited to 4 in flight per ATS host, with `Retry-After` backoff on 429/503.
 - Embeddings run **locally** (BGE-small via ONNX/fastembed): no per-call API cost and deterministic for evals.
 
 ### 2. Retrieval and ranking ([app/search.py](app/search.py))
@@ -85,7 +104,10 @@ flowchart LR
 | Semantic | pgvector cosine distance on an HNSW index, `ef_search` widened when filters are applied |
 | Early-career source | For intern/entry profiles, a third retriever: vector search limited to intern/new-grad/associate titles. Without it these roles (<1% of the index) get crowded out |
 | Fusion | Reciprocal Rank Fusion, `k = 60`, over all candidate lists |
+| Filters | City (array overlap on canonical names), India, remote, and a posting window (default 14 days) |
 | Personalisation | Boosts for preferred cities/roles/remote; dismissed jobs and avoided companies filtered out |
+| Freshness | ×1.05 for postings under 3 days old; *Newest* sort orders by date instead (and skips the rerank) |
+| Dedupe | One card per company + title (city suffix ignored) + cities |
 | Seniority fit | Title level (intern → staff/manager) vs the profile's level; a student's feed isn't led by Staff roles |
 | Rerank | LLM grades the top 15 (0–10) with a one-line reason, via structured output; hallucinated ids are ignored |
 
@@ -197,6 +219,7 @@ Postgres + pgvector (`career_agent_test`) and the real embedding model.
 | `DB_POOL_MAX` | `3` |
 | `DAILY_LLM_LIMIT` | `40` (per user) |
 | `GLOBAL_DAILY_LLM_LIMIT` | `800` (all users combined; protects the free-tier quota) |
+| `FRESH_DAYS_DEFAULT` | `14` (optional; posting window when the user hasn't picked one) |
 
 Ingestion runs in GitHub Actions, not on Vercel: functions stop after 60 s, and a full first ingest takes several minutes.
 
@@ -232,12 +255,14 @@ CareerAgent/
 │   ├── store.py            # users, memory, feedback, usage caps
 │   ├── llm/                # provider-neutral interface, Gemini, offline + scripted fakes
 │   ├── agent/              # tools (validated) + loop (step budget, trace)
-│   ├── ingest/             # sources, normalisers, incremental pipeline, boards.json
+│   ├── ingest/             # sources, normalisers, cities, incremental pipeline, boards.json
 │   └── static/             # web UI (vanilla JS)
+├── data/companies.csv      # companies to run board discovery on
+├── scripts/                # discover_boards.py, fetch_model.py
 ├── evals/                  # snapshot, LLM-judge labels, retrieval + agent evals
 ├── tests/                  # unit + Postgres integration tests
 ├── Dockerfile · docker-compose.yml
-└── .github/workflows/      # CI + nightly ingest
+└── .github/workflows/      # CI + twice-daily ingest
 ```
 
 ## Design decisions and limitations
@@ -267,4 +292,4 @@ Released under the **MIT License**. See [`LICENSE`](LICENSE).
 
 ---
 
-<sub>Job data comes from each company's public job board via the Greenhouse, Lever and Ashby posting APIs. Always apply through the original posting.</sub>
+<sub>Job data comes from each company's public job board via the Greenhouse, Lever, Ashby, Workable, SmartRecruiters and Recruitee posting APIs. Always apply through the original posting.</sub>

@@ -25,7 +25,8 @@ Remembered preferences: {prefs}
 Rules:
 - Every job, company, link or requirement you mention must come from a tool result in this conversation. Never invent postings.
 - Use recommend_jobs for "what should I apply to" style requests and search_jobs for specific queries.
-- When the user states a lasting preference (city, remote, roles, companies to avoid), call update_preferences.
+- When the user states a lasting preference (city, remote, roles, companies to avoid, how recent jobs must be), call update_preferences.
+- Searches only cover jobs posted in the last 14 days unless the user asks otherwise; for "this week" pass posted_within_days=7. The index holds at most 30 days.
 - Before claiming the user is a good fit for a specific job, call explain_match.
 - If a tool returns an error, fix the arguments or tell the user what is needed.
 - Reply concisely in Markdown. List jobs as: **Title** at Company (Location) followed by the link."""
@@ -90,7 +91,8 @@ def _summarise(out: dict) -> str:
 
 def _result(reply: str, trace: list[dict], ctx: ToolContext, steps: int) -> AgentResult:
     jobs = [
-        {"id": j.id, "title": j.title, "company": j.company, "location": j.location, "url": j.url, "remote": j.is_remote}
+        {"id": j.id, "title": j.title, "company": j.company, "location": j.location, "url": j.url, "remote": j.is_remote,
+         "posted_at": j.posted_at.isoformat() if j.posted_at else None}
         for j in ctx.seen_jobs.values()
     ]
     return AgentResult(reply=reply, trace=trace, jobs=jobs, steps=steps)

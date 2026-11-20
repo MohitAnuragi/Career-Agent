@@ -7,6 +7,7 @@ from typing import Any, Callable
 from pydantic import BaseModel, Field, ValidationError
 
 from app import matching, search, store
+from app.config import get_settings
 from app.llm.base import LLM, ToolSpec
 from app.models import CandidateProfile, Job, Preferences, ScoredJob, SearchFilters
 
@@ -36,6 +37,7 @@ def _card(sj: ScoredJob | Job, ctx: ToolContext) -> dict:
         "company": job.company,
         "location": job.location,
         "remote": job.is_remote,
+        "posted": job.posted_at.date().isoformat() if job.posted_at else None,
         "url": job.url,
     }
     if isinstance(sj, ScoredJob) and sj.reason:
@@ -63,7 +65,17 @@ def _dismissed(ctx: ToolContext) -> list[str]:
 # ---------------------------------------------------------------- argument models
 class SearchArgs(BaseModel):
     query: str = Field(min_length=1, description="What to look for, e.g. 'android developer intern' or 'LLM backend'")
-    location: str | None = Field(default=None, description="City substring, e.g. 'Bengaluru'")
+    location: str | None = Field(default=None, description="One city or area as the user said it, e.g. 'Bangalore'")
+    cities: list[str] = Field(
+        default_factory=list,
+        description="Cities to include, e.g. ['Pune', 'Mumbai']. 'Delhi NCR' covers Delhi, Gurugram, Noida, "
+        "Ghaziabad and Faridabad",
+    )
+    posted_within_days: int | None = Field(
+        default=None, ge=1, le=30,
+        description="Only jobs posted in the last N days: 7 = this week, 14 = last two weeks. "
+        "Omit to use the user's saved window (default 14)",
+    )
     india_only: bool = Field(default=False, description="Only roles located in India")
     remote_only: bool = Field(default=False, description="Only remote roles")
     company: str | None = Field(default=None, description="Company name substring")
@@ -87,11 +99,17 @@ class NoArgs(BaseModel):
 
 
 # ---------------------------------------------------------------- implementations
+def _window(ctx: ToolContext, requested: int | None = None) -> int:
+    return requested or ctx.prefs.posted_within_days or get_settings().fresh_days_default
+
+
 def search_jobs(ctx: ToolContext, a: SearchArgs) -> dict:
     filters = SearchFilters(
         india_only=a.india_only,
         remote_only=a.remote_only,
         location=a.location,
+        cities=a.cities,
+        posted_within_days=_window(ctx, a.posted_within_days),
         company=a.company,
         exclude_job_ids=_dismissed(ctx),
     )
@@ -107,7 +125,7 @@ def recommend_jobs(ctx: ToolContext, a: RecommendArgs) -> dict:
         profile,
         ctx.profile_vector,
         prefs=ctx.prefs,
-        filters=SearchFilters(exclude_job_ids=_dismissed(ctx)),
+        filters=SearchFilters(exclude_job_ids=_dismissed(ctx), posted_within_days=_window(ctx)),
         limit=a.limit,
         llm=ctx.llm,
     )
@@ -193,7 +211,8 @@ TOOLS: dict[str, Tool] = {
         Tool("dismiss_job", "Hide a job the user is not interested in.", JobIdArgs, dismiss_job),
         Tool("list_saved_jobs", "List jobs the user has saved.", NoArgs, list_saved_jobs),
         Tool("update_preferences",
-             "Remember durable preferences (locations, remote, India-only, roles, companies to avoid). "
+             "Remember durable preferences (locations, remote, India-only, roles, companies to avoid, "
+             "how recent postings must be). "
              "Call whenever the user states one.", Preferences, update_preferences),
         Tool("draft_application_answer", "Draft an answer to an application question for one job.",
              DraftArgs, draft_application_answer),

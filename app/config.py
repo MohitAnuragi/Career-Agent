@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     rerank_top_n: int = 15
 
+    # Freshness and ingest housekeeping
+    fresh_days_default: int = 14  # search/feed show jobs posted in the last N days unless asked otherwise
+    ingest_max_age_days: int = 30  # older postings are not stored, and stored ones expire past this age
+    prune_after_days: int = 60  # inactive jobs unseen this long are deleted (unless a user saved/dismissed them)
+    board_max_failures: int = 7  # consecutive failed runs before a board is disabled
+
 
 @lru_cache
 def get_settings() -> Settings:

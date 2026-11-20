@@ -275,6 +275,23 @@ button { font: inherit; color: inherit; }
 .segmented { position: relative; display: inline-flex; padding: 4px; border-radius: 11px; background: var(--surface-2); border: 1px solid var(--border); }
 .seg { position: relative; z-index: 1; border: none; background: none; padding: 6px 12px; font-size: 13px; font-weight: 600; color: var(--muted); border-radius: 8px; cursor: pointer; transition: color 0.2s; white-space: nowrap; }
 .seg.active { color: var(--on-ink); }
+.search-controls + .search-controls { margin-top: -4px; }
+.city-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.city-chip {
+  display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; font-weight: 600;
+  padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface);
+  color: var(--text); cursor: pointer; transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.city-chip .n { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--muted); }
+.city-chip:hover:not(:disabled) { border-color: var(--ink); }
+.city-chip.on { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+.city-chip.on .n { color: var(--on-ink); opacity: 0.75; }
+.city-chip:disabled { opacity: 0.4; cursor: default; }
+.select-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13.5px; margin: 10px 0; }
+.select-row select {
+  font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text);
+}
 
 /* ============================================================ job cards */
 .list { display: flex; flex-direction: column; gap: 10px; }
@@ -307,6 +324,7 @@ button { font: inherit; color: inherit; }
 .tag .icon { width: 12px; height: 12px; }
 .tag.remote { color: var(--text); border-color: var(--border-strong); }
 .tag.fresh { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
+.tag.undated { border-style: dashed; }
 .why { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 13.5px; padding: 8px 0 0; border-top: 1px dashed var(--border); }
 .why .icon { width: 15px; height: 15px; color: var(--text); margin-top: 2px; }
 .ranks { display: flex; gap: 14px; margin-top: 10px; font-family: var(--mono); font-size: 11px; color: var(--muted); }

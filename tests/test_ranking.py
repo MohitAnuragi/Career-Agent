@@ -29,16 +29,44 @@ def test_preference_boost():
     assert preference_boost(job("3"), None) == 1.0
 
 
-def test_city_aliases_and_early_career_queries():
-    from app.search import is_early_career_query, location_patterns
+def test_city_filters_and_early_career_queries():
+    from app.models import SearchFilters
+    from app.search import filter_cities, is_early_career_query
 
-    assert location_patterns("Bengaluru") == ["%bangalore%", "%bengaluru%"]
-    assert location_patterns(" Gurgaon ") == ["%gurgaon%", "%gurugram%"]
-    assert location_patterns("Pune") == ["%pune%"]
+    assert filter_cities(SearchFilters(location=" Gurgaon ")) == (["Gurugram"], None)
+    assert filter_cities(SearchFilters(location="ncr", cities=["Pune"])) == (["Pune", "Delhi NCR"], None)
+    assert filter_cities(SearchFilters(location="Koramangala")) == ([], "Koramangala")  # unknown: substring match
     assert is_early_career_query("software engineering internships in Bengaluru")
     assert is_early_career_query("new grad backend roles")
     assert not is_early_career_query("internal tools engineer")
     assert not is_early_career_query("senior backend engineer")
+
+
+def test_preference_boost_uses_canonical_cities():
+    prefs = Preferences(locations=["gurgaon"])
+    gurugram = job("1", location="Sector 44").model_copy(update={"cities": ["Gurugram", "Delhi NCR"]})
+    assert preference_boost(gurugram, prefs) == pytest.approx(1.15)
+
+
+def test_freshness_boost_is_small_and_recent_only():
+    from datetime import datetime, timedelta, timezone
+
+    from app.search import freshness_boost
+
+    now = datetime.now(timezone.utc)
+    assert freshness_boost(job("1").model_copy(update={"posted_at": now - timedelta(days=1)}), now) == 1.05
+    assert freshness_boost(job("2").model_copy(update={"posted_at": now - timedelta(days=10)}), now) == 1.0
+    assert freshness_boost(job("3"), now) == 1.0  # undated
+
+
+def test_dedupe_collapses_city_suffixed_reposts():
+    from app.search import dedupe
+
+    a = job("a", "Backend Engineer - Bangalore").model_copy(update={"cities": ["Bengaluru"]})
+    b = job("b", "Backend Engineer (Bengaluru)").model_copy(update={"cities": ["Bengaluru"]})
+    c = job("c", "Backend Engineer - Pune").model_copy(update={"cities": ["Pune"]})
+    out = dedupe([ScoredJob(job=x, score=1.0) for x in (a, b, c)])
+    assert [r.job.id for r in out] == ["a", "c"]
 
 
 def test_title_levels():

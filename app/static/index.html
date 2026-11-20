@@ -50,6 +50,8 @@
       <span class="sep">·</span>
       <span><b data-count="0" id="stat-companies">0</b> companies</span>
       <span class="sep hide-sm">·</span>
+      <span class="hide-sm"><b data-count="0" id="stat-week">0</b> new this week</span>
+      <span class="sep hide-sm">·</span>
       <span class="hide-sm muted" id="stat-updated">syncing…</span>
     </div>
     <div class="top-actions">
@@ -81,6 +83,13 @@
         <h3>Preferences</h3>
         <label class="switch"><input type="checkbox" id="pref-india"><span class="track"><span class="thumb"></span></span> India only</label>
         <label class="switch"><input type="checkbox" id="pref-remote" checked><span class="track"><span class="thumb"></span></span> Include remote</label>
+        <label class="select-row">Show jobs posted in the last
+          <select id="pref-window">
+            <option value="7">7 days</option>
+            <option value="14" selected>14 days</option>
+            <option value="30">30 days</option>
+          </select>
+        </label>
         <div class="memory">
           <div class="memory-title"><svg class="icon"><use href="#i-brain"/></svg> What the agent remembers</div>
           <ul id="memory-list"></ul>
@@ -147,6 +156,21 @@
           <label class="switch"><input type="checkbox" id="s-india" checked><span class="track"><span class="thumb"></span></span> India</label>
           <label class="switch"><input type="checkbox" id="s-remote"><span class="track"><span class="thumb"></span></span> Remote</label>
         </div>
+        <div class="search-controls">
+          <div class="segmented" id="posted" role="radiogroup" aria-label="Posted within">
+            <span class="seg-indicator" aria-hidden="true"></span>
+            <button type="button" class="seg" data-value="7" role="radio" aria-checked="false">7 days</button>
+            <button type="button" class="seg active" data-value="14" role="radio" aria-checked="true">14 days</button>
+            <button type="button" class="seg" data-value="30" role="radio" aria-checked="false">30 days</button>
+          </div>
+          <div class="segmented" id="sort" role="radiogroup" aria-label="Sort by">
+            <span class="seg-indicator" aria-hidden="true"></span>
+            <button type="button" class="seg active" data-value="relevance" role="radio" aria-checked="true">Best match</button>
+            <button type="button" class="seg" data-value="newest" role="radio" aria-checked="false">Newest</button>
+          </div>
+          <label class="switch" title="Jobs whose posting date the job board doesn't give"><input type="checkbox" id="s-undated"><span class="track"><span class="thumb"></span></span> Include undated</label>
+        </div>
+        <div class="city-chips" id="city-chips" role="group" aria-label="Cities"></div>
         <div id="results" class="list"></div>
       </div>
 

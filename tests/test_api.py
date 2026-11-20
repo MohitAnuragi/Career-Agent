@@ -18,7 +18,7 @@ def client(seeded):
 
 
 def test_full_flow(client):
-    assert client.get("/api/health").json()["active_jobs"] == 4
+    assert client.get("/api/health").json()["active_jobs"] == 5
     assert client.get("/api/profile").status_code == 401
 
     uid = client.post("/api/users").json()["user_id"]
@@ -33,6 +33,8 @@ def test_full_flow(client):
     assert "lever:cred:aa-1" in [j["id"] for j in recs[:2]]  # Android intern near the top for an Android resume
     again = client.get("/api/recommendations", headers=h).json()
     assert not first["cached"] and again["cached"] and again["jobs"] == recs  # reload costs no AI call
+
+    assert "lever:cred:aa-2" not in {j["id"] for j in recs}  # 20 days old: outside the default 14-day window
 
     s = client.get("/api/search", params={"q": "LLM agents", "india_only": True}).json()["jobs"]
     assert s[0]["id"] == "ashby:sarvam:ab-1"
@@ -57,3 +59,22 @@ def test_full_flow(client):
 
 def test_admin_ingest_requires_token(client):
     assert client.post("/admin/ingest").status_code == 403
+
+
+def test_search_window_cities_and_sort(client):
+    def ids(**params):
+        return [j["id"] for j in client.get("/api/search", params={"q": "analyst engineer", **params}).json()["jobs"]]
+
+    assert "lever:cred:aa-2" not in ids()  # default 14 days
+    assert ids(cities="Delhi NCR", posted_within_days=30) == ["lever:cred:aa-2"]
+    assert ids(cities=["Pune", "Delhi NCR"], posted_within_days=30) == ["lever:cred:aa-2"]
+    newest = client.get("/api/search", params={"q": "engineer", "sort": "newest"}).json()["jobs"]
+    dates = [j["posted_at"] for j in newest]
+    assert dates == sorted(dates, reverse=True)
+    assert client.get("/api/search", params={"q": "x", "posted_within_days": 90}).status_code == 422
+
+    stats = client.get("/api/stats").json()
+    assert stats["fresh"]["this_week"] == 3 and stats["fresh"]["undated"] == 1
+    cities = {c["city"]: c for c in stats["cities"]}
+    assert cities["Delhi NCR"]["jobs"] == 1 and cities["Delhi NCR"]["fresh"] == 0
+    assert "Delhi NCR" in stats["featured_cities"] and stats["boards"]["total"] == 3

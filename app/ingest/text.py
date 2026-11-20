@@ -7,17 +7,35 @@ import re
 
 from bs4 import BeautifulSoup
 
+from app.ingest.cities import ALL_ALIASES
+
 _WS = re.compile(r"[ \t\r\f\v]+")
 _BLANKS = re.compile(r"\n\s*\n+")
 _BLOCK_TAGS = ["p", "div", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "section", "blockquote"]
 
-# Word boundaries matter: "Indiana" and "Indianapolis" are not India.
+# Word boundaries matter: "Indiana" and "Indianapolis" are not India. Built from the city table so the two can't drift.
 _INDIA = re.compile(
-    r"\b(india|bengaluru|bangalore|gurugram|gurgaon|mumbai|pune|hyderabad|chennai|noida|"
-    r"new delhi|delhi|ncr|kolkata|ahmedabad|jaipur|kochi|chandigarh|indore|coimbatore)\b",
+    r"\b(india|" + "|".join(r"[\s-]+".join(map(re.escape, a.split())) for a in ALL_ALIASES) + r")\b",
     re.IGNORECASE,
 )
 _REMOTE = re.compile(r"\b(remote|work from home|wfh|anywhere)\b", re.IGNORECASE)
+
+# Remote scope: who can actually take a remote role.
+_REMOTE_INDIA = re.compile(r"\b(india|ist|apac|asia)\b", re.IGNORECASE)
+_REMOTE_GLOBAL = re.compile(r"\b(anywhere|worldwide|global|international)\b", re.IGNORECASE)
+_REMOTE_RESTRICTED = re.compile(
+    r"\b(us|usa|u\.s\.?|united states|americas?|north america|canada|mexico|latam|brazil|uk|united kingdom|"
+    r"europe|eu|emea|germany|france|spain|portugal|netherlands|ireland|poland|israel|australia|japan|singapore|"
+    r"new york|san francisco|seattle|austin|london|berlin|toronto)\b",
+    re.IGNORECASE,
+)
+_INDIA_COUNTRY = {"in", "ind", "india"}
+# Words in a location that don't name a place.
+_REMOTE_FILLER = re.compile(
+    r"\b(remote|remotely|work from home|wfh|hybrid|flexible|full[- ]?time|part[- ]?time|first|friendly|only|"
+    r"based|location|locations|or|and|office|home)\b",
+    re.IGNORECASE,
+)
 
 
 def html_to_text(raw: str | None, *, escaped: bool = False) -> str:
@@ -45,6 +63,27 @@ def is_india(*texts: str | None) -> bool:
 
 def is_remote(*texts: str | None) -> bool:
     return any(t and _REMOTE.search(t) for t in texts)
+
+
+def is_india_country(country: str | None) -> bool:
+    return bool(country) and country.strip().lower() in _INDIA_COUNTRY
+
+
+def remote_scope(remote: bool, *texts: str | None, country: str | None = None) -> str:
+    """'' (not remote) | 'india' | 'global' | 'restricted' (other countries only) | 'unspecified' (bare "Remote")."""
+    if not remote:
+        return ""
+    text = " ; ".join(t for t in texts if t)
+    if is_india_country(country) or _REMOTE_INDIA.search(text) or is_india(text):
+        return "india"
+    if _REMOTE_GLOBAL.search(text):
+        return "global"
+    if (country and country.strip()) or _REMOTE_RESTRICTED.search(text):
+        return "restricted"
+    # Any other place named ("Arizona", "Remote - Ontario") is somewhere that isn't India: only a bare "Remote" is unknown.
+    if re.search(r"[a-z]", _REMOTE_FILLER.sub(" ", text), re.IGNORECASE):
+        return "restricted"
+    return "unspecified"
 
 
 def content_hash(*fields: object) -> str:

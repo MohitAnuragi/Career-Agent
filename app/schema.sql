@@ -4,7 +4,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- One row per job posting. `id` is "<source>:<company>:<external id>" so it is stable across runs.
 CREATE TABLE IF NOT EXISTS jobs (
     id              TEXT PRIMARY KEY,
-    source          TEXT NOT NULL,            -- greenhouse | lever | ashby
+    source          TEXT NOT NULL,            -- greenhouse | lever | ashby | workable | smartrecruiters | recruitee
     board           TEXT NOT NULL,            -- the company's board slug on that source
     company         TEXT NOT NULL,
     title           TEXT NOT NULL,
@@ -32,6 +32,29 @@ CREATE INDEX IF NOT EXISTS jobs_tsv_idx       ON jobs USING gin (search_tsv);
 CREATE INDEX IF NOT EXISTS jobs_embedding_idx ON jobs USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS jobs_active_idx    ON jobs (is_active, is_india, is_remote);
 CREATE INDEX IF NOT EXISTS jobs_board_idx     ON jobs (source, board);
+
+-- Freshness, cities and remote scope (added later; ADD COLUMN IF NOT EXISTS migrates existing databases).
+-- effective_posted_at: the ATS posted date, else first_seen_at when the board was already known, else NULL.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS effective_posted_at TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS posted_at_source TEXT NOT NULL DEFAULT 'unknown';  -- ats | first_seen | unknown
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cities TEXT[] NOT NULL DEFAULT '{}';               -- canonical, incl. "Delhi NCR"
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS remote_scope TEXT NOT NULL DEFAULT '';             -- '' | india | global | unspecified | restricted
+CREATE INDEX IF NOT EXISTS jobs_fresh_idx  ON jobs (is_active, effective_posted_at DESC);
+CREATE INDEX IF NOT EXISTS jobs_cities_idx ON jobs USING gin (cities);
+
+-- Runtime state per board. boards.json stays the reviewed list of boards; this table tracks health and
+-- first_ingested_at, which decides whether first_seen_at is a trustworthy posted date.
+CREATE TABLE IF NOT EXISTS boards (
+    source               TEXT NOT NULL,
+    board                TEXT NOT NULL,
+    company              TEXT NOT NULL,
+    first_ingested_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_ok_at           TIMESTAMPTZ,
+    last_error           TEXT,
+    consecutive_failures INT NOT NULL DEFAULT 0,
+    disabled             BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (source, board)
+);
 
 -- Anonymous users: the browser keeps the id. Only the structured profile is stored, never the resume file.
 CREATE TABLE IF NOT EXISTS users (

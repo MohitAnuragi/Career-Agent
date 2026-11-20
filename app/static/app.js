@@ -1,7 +1,10 @@
 // Career Agent web UI: plain JS, no build step.
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
-const state = { user: null, profile: null, prefs: null, saved: new Set(), method: "hybrid", tab: "feed", jobs: new Map() };
+const state = {
+  user: null, profile: null, prefs: null, saved: new Set(), method: "hybrid", tab: "feed", jobs: new Map(),
+  posted: "14", sort: "relevance", cities: new Set(),
+};
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ---------------------------------------------------------------- storage + api
@@ -59,8 +62,10 @@ function ago(iso) {
   if (!iso) return null;
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
   if (Number.isNaN(days) || days < 0) return null;
-  if (days === 0) return { text: "today", fresh: true };
-  if (days < 7) return { text: `${days}d ago`, fresh: true };
+  // `week` labels the two windows the feed is built around: this week and last week.
+  if (days === 0) return { text: "today", fresh: true, week: "This week" };
+  if (days < 7) return { text: `${days}d ago`, fresh: true, week: "This week" };
+  if (days < 14) return { text: `${days}d ago`, fresh: false, week: "Last week" };
   if (days < 60) return { text: `${Math.floor(days / 7)}w ago`, fresh: false };
   return { text: `${Math.floor(days / 30)}mo ago`, fresh: false };
 }
@@ -142,7 +147,7 @@ function moveIndicator(container, activeSel, indicatorSel) {
 }
 const syncIndicators = () => {
   moveIndicator($("#tabs"), ".tab.active", ".tab-indicator");
-  moveIndicator($("#method"), ".seg.active", ".seg-indicator");
+  for (const id of ["#method", "#posted", "#sort"]) moveIndicator($(id), ".seg.active", ".seg-indicator");
 };
 addEventListener("resize", syncIndicators);
 
@@ -191,12 +196,14 @@ function renderPrefs() {
   const p = state.prefs || {};
   $("#pref-india").checked = !!p.india_only;
   $("#pref-remote").checked = p.remote_ok !== false;
+  $("#pref-window").value = String(p.posted_within_days || 14);
   const items = [
     p.locations?.length && `Prefers ${p.locations.join(", ")}`,
     p.roles?.length && `Roles: ${p.roles.join(", ")}`,
     p.avoid_companies?.length && `Avoids ${p.avoid_companies.join(", ")}`,
     p.india_only && "India-based roles only",
     p.remote_ok === false && "No remote roles",
+    p.posted_within_days && `Jobs from the last ${p.posted_within_days} days`,
     ...(p.notes || []),
   ].filter(Boolean);
   $("#memory-list").innerHTML = items.length
@@ -205,7 +212,10 @@ function renderPrefs() {
 }
 
 async function savePrefs() {
-  const prefs = { ...(state.prefs || {}), india_only: $("#pref-india").checked, remote_ok: $("#pref-remote").checked };
+  const prefs = {
+    ...(state.prefs || {}), india_only: $("#pref-india").checked, remote_ok: $("#pref-remote").checked,
+    posted_within_days: Number($("#pref-window").value),
+  };
   try {
     state.prefs = (await api("/api/preferences", { method: "PUT", json: prefs })).preferences;
     renderPrefs();
@@ -233,6 +243,15 @@ async function uploadResume(form) {
 }
 
 // ---------------------------------------------------------------- job cards
+function postedTag(j) {
+  const when = ago(j.posted_at);
+  if (when) {
+    const label = when.week ? `${when.week} · ${when.text}` : when.text;
+    return `<span class="tag ${when.fresh ? "fresh" : ""}">${icon("clock")}${label}</span>`;
+  }
+  return j.posted_at_source === "unknown" ? `<span class="tag undated">${icon("clock")}date unknown</span>` : "";
+}
+
 function jobCard(j, i, { showRanks = false } = {}) {
   state.jobs.set(j.id, j);
   const node = $("#job-tpl").content.firstElementChild.cloneNode(true);
@@ -247,9 +266,8 @@ function jobCard(j, i, { showRanks = false } = {}) {
   const tags = [];
   if (j.location) tags.push(`<span class="tag">${icon("pin")}${esc(j.location.length > 42 ? j.location.slice(0, 40) + "…" : j.location)}</span>`);
   if (j.remote) tags.push(`<span class="tag remote">${icon("globe")}Remote</span>`);
-  const when = ago(j.posted_at);
-  if (when) tags.push(`<span class="tag ${when.fresh ? "fresh" : ""}">${icon("clock")}${when.text}</span>`);
-  $(".tags", node).innerHTML = tags.join("");
+  tags.push(postedTag(j));
+  $(".tags", node).innerHTML = tags.filter(Boolean).join("");
 
   if (j.reason) {
     const why = $(".why", node);
@@ -386,7 +404,9 @@ async function runSearch(ev) {
   if (!q) return;
   const params = new URLSearchParams({
     q, method: state.method, india_only: $("#s-india").checked, remote_only: $("#s-remote").checked, limit: 20,
+    posted_within_days: state.posted, sort: state.sort, include_undated: $("#s-undated").checked,
   });
+  for (const c of state.cities) params.append("cities", c);
   const el = $("#results");
   skeletons(el);
   try {
@@ -584,12 +604,38 @@ function openChat(open) {
 // ---------------------------------------------------------------- stats
 async function loadStats() {
   try {
-    const { jobs, last_ingest } = await api("/api/stats");
+    const { jobs, fresh, cities, featured_cities, last_ingest } = await api("/api/stats");
     countUp($("#stat-jobs"), jobs.active);
     countUp($("#stat-companies"), jobs.companies);
+    countUp($("#stat-week"), fresh?.this_week || 0);
+    renderCityChips(featured_cities || [], cities || []);
     const when = last_ingest?.finished_at ? ago(last_ingest.finished_at) : null;
     $("#stat-updated").textContent = when ? `updated ${when.text}` : "not synced yet";
   } catch { $("#stat-updated").textContent = "index offline"; }
+}
+
+function renderCityChips(featured, counts) {
+  const n = Object.fromEntries(counts.map((c) => [c.city, c.fresh]));
+  $("#city-chips").innerHTML = featured.map((c) => {
+    const on = state.cities.has(c), count = n[c] || 0;
+    return `<button type="button" class="city-chip${on ? " on" : ""}" data-city="${esc(c)}" aria-pressed="${on}"
+      ${count || on ? "" : "disabled"}>${esc(c)} <span class="n">${count}</span></button>`;
+  }).join("");
+  $$("#city-chips .city-chip").forEach((b) => b.addEventListener("click", () => {
+    const c = b.dataset.city;
+    if (state.cities.has(c)) state.cities.delete(c); else state.cities.add(c);
+    b.classList.toggle("on", state.cities.has(c));
+    b.setAttribute("aria-pressed", state.cities.has(c));
+    if ($("#q").value.trim()) runSearch();
+  }));
+}
+
+function wireSegmented(id, onPick) {
+  $$(`${id} .seg`).forEach((s) => s.addEventListener("click", () => {
+    $$(`${id} .seg`).forEach((x) => { x.classList.toggle("active", x === s); x.setAttribute("aria-checked", x === s); });
+    syncIndicators();
+    onPick(s.dataset.value);
+  }));
 }
 
 // ---------------------------------------------------------------- wire up
@@ -625,6 +671,10 @@ $("#resume-text-btn").addEventListener("click", () => {
 $("#open-upload").addEventListener("click", () => { $("#onboarding").scrollIntoView({ behavior: "smooth" }); $("#resume-file").click(); });
 $("#pref-india").addEventListener("change", savePrefs);
 $("#pref-remote").addEventListener("change", savePrefs);
+$("#pref-window").addEventListener("change", savePrefs);
+wireSegmented("#posted", (v) => { state.posted = v; if ($("#q").value.trim()) runSearch(); });
+wireSegmented("#sort", (v) => { state.sort = v; if ($("#q").value.trim()) runSearch(); });
+$("#s-undated").addEventListener("change", () => { if ($("#q").value.trim()) runSearch(); });
 $("#refresh-feed").addEventListener("click", loadFeed);
 $("#search-form").addEventListener("submit", runSearch);
 $("#chat-form").addEventListener("submit", (e) => {

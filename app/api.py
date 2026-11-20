@@ -20,6 +20,7 @@ from app.agent.tools import ToolContext
 from app.config import get_settings
 from app.db import close_pools, connection, get_pool
 from app.embeddings import embed_query
+from app.ingest.cities import FEATURED
 from app.llm import LLMError, get_llm
 from app.models import Preferences, ScoredJob, SearchFilters
 from app.profile import ResumeError, extract_profile, pdf_to_text
@@ -84,7 +85,8 @@ def job_out(r: ScoredJob) -> dict:
     return {
         "id": j.id, "title": j.title, "company": j.company, "location": j.location, "remote": j.is_remote,
         "india": j.is_india, "url": j.url, "department": j.department, "source": j.source,
-        "posted_at": j.posted_at.isoformat() if j.posted_at else None,
+        "posted_at": j.posted_at.isoformat() if j.posted_at else None, "posted_at_source": j.posted_at_source,
+        "cities": j.cities,
         "snippet": j.description[:280], "score": round(r.score, 5), "reason": r.reason,
         "keyword_rank": r.keyword_rank, "vector_rank": r.vector_rank,
     }
@@ -107,10 +109,42 @@ def stats(conn: Conn):
                   count(DISTINCT company) FILTER (WHERE is_active) AS companies
            FROM jobs"""
     ).fetchone()
+    fresh = conn.execute(
+        """SELECT count(*) FILTER (WHERE effective_posted_at >= now() - interval '7 days') AS this_week,
+                  count(*) FILTER (WHERE effective_posted_at <  now() - interval '7 days'
+                                     AND effective_posted_at >= now() - interval '14 days') AS last_week,
+                  count(*) FILTER (WHERE is_remote AND effective_posted_at >= now() - interval '14 days') AS remote,
+                  count(*) FILTER (WHERE posted_at_source = 'unknown') AS undated
+           FROM jobs WHERE is_active"""
+    ).fetchone()
+    cities = conn.execute(
+        """SELECT c AS city, count(*) AS jobs,
+                  count(*) FILTER (WHERE effective_posted_at >= now() - make_interval(days => %s::int)) AS fresh
+           FROM jobs, unnest(cities) AS c WHERE is_active GROUP BY c ORDER BY jobs DESC""",
+        [get_settings().fresh_days_default],
+    ).fetchall()
+    boards = conn.execute(
+        """SELECT count(*) AS total, count(*) FILTER (WHERE disabled) AS disabled,
+                  count(*) FILTER (WHERE consecutive_failures > 0 AND NOT disabled) AS failing
+           FROM boards"""
+    ).fetchone()
+    failing = conn.execute(
+        """SELECT source, board, company, consecutive_failures, last_error, disabled FROM boards
+           WHERE consecutive_failures > 0 ORDER BY disabled DESC, consecutive_failures DESC LIMIT 50"""
+    ).fetchall()
     last = conn.execute(
         "SELECT started_at, finished_at, stats FROM ingest_runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1"
     ).fetchone()
-    return {"jobs": totals, "last_ingest": last}
+    return {
+        "jobs": totals, "fresh": fresh, "cities": cities, "featured_cities": FEATURED,
+        "fresh_days_default": get_settings().fresh_days_default,
+        "boards": {**boards, "problems": failing}, "last_ingest": last,
+    }
+
+
+def window_days(requested: int | None, prefs: Preferences | None) -> int:
+    """Posting window: what the request asked for, else the user's remembered choice, else the default."""
+    return requested or (prefs.posted_within_days if prefs else None) or get_settings().fresh_days_default
 
 
 @app.post("/api/users")
@@ -161,6 +195,8 @@ def recommendations(
     user: User,
     limit: int = Query(20, ge=1, le=50),
     rerank: bool = True,
+    posted_within_days: int | None = Query(None, ge=1, le=30),
+    include_undated: bool = False,
 ):
     profile, vector = store.get_profile(conn, user)
     if profile is None:
@@ -168,16 +204,17 @@ def recommendations(
     prefs = store.get_preferences(conn, user)
     dismissed = store.feedback_ids(conn, user, "dismiss")
     # Same user + profile + preferences + hidden jobs => same reranked feed; don't pay for it again.
-    key = (user, limit, profile.model_dump_json(), prefs.model_dump_json(), tuple(sorted(dismissed)))
+    days = window_days(posted_within_days, prefs)
+    key = (user, limit, days, include_undated, profile.model_dump_json(), prefs.model_dump_json(),
+           tuple(sorted(dismissed)))
     if rerank and (hit := _rec_cache.get(key)) and time.monotonic() - hit[0] < REC_TTL:
         return {"jobs": hit[1], "cached": True}
     llm = None
     if rerank:
         store.charge_llm_call(conn, user, get_settings().daily_llm_limit)
         llm = get_llm()
-    results = search.recommend(
-        conn, profile, vector, prefs=prefs, filters=SearchFilters(exclude_job_ids=dismissed), limit=limit, llm=llm,
-    )
+    filters = SearchFilters(exclude_job_ids=dismissed, posted_within_days=days, include_undated=include_undated)
+    results = search.recommend(conn, profile, vector, prefs=prefs, filters=filters, limit=limit, llm=llm)
     jobs = [job_out(r) for r in results]
     if rerank:
         if len(_rec_cache) > 500:  # crude bound; entries are small and expire anyway
@@ -194,6 +231,10 @@ def search_jobs(
     india_only: bool = False,
     remote_only: bool = False,
     location: str | None = None,
+    cities: Annotated[list[str], Query()] = [],
+    posted_within_days: int | None = Query(None, ge=1, le=30),
+    include_undated: bool = False,
+    sort: search.Sort = "relevance",
     limit: int = Query(20, ge=1, le=50),
     x_user_id: Annotated[str | None, Header()] = None,
 ):
@@ -203,15 +244,18 @@ def search_jobs(
         prefs = store.get_preferences(conn, x_user_id)
         dismissed = store.feedback_ids(conn, x_user_id, "dismiss")
         profile, _ = store.get_profile(conn, x_user_id)
+    if sort == "newest" and method == "hybrid_rerank":
+        method = "hybrid"  # a date-ordered list gains nothing from an LLM relevance pass; don't charge for one
     if method == "hybrid_rerank":
         if not known_user:
             raise HTTPException(401, "Reranking needs a user (X-User-Id).")
         store.charge_llm_call(conn, x_user_id, get_settings().daily_llm_limit)
         llm = get_llm()
-    filters = SearchFilters(india_only=india_only, remote_only=remote_only, location=location,
-                            exclude_job_ids=dismissed)
+    filters = SearchFilters(india_only=india_only, remote_only=remote_only, location=location, cities=cities,
+                            posted_within_days=window_days(posted_within_days, prefs),
+                            include_undated=include_undated, exclude_job_ids=dismissed)
     results = search.search(conn, q, method=method, filters=filters, prefs=prefs, limit=limit, llm=llm,
-                            profile=profile)
+                            profile=profile, sort=sort)
     return {"jobs": [job_out(r) for r in results]}
 
 

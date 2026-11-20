@@ -78,3 +78,91 @@ def test_global_llm_cap_stops_many_anonymous_users(conn):
         store.charge_llm_call(conn, store.create_user(conn), limit=10, global_limit=3)
     with pytest.raises(store.RateLimited, match="shared"):
         store.charge_llm_call(conn, store.create_user(conn), limit=10, global_limit=3)
+
+
+# ---------------------------------------------------------------- freshness, cities, board health
+def _ids(results):
+    return {r.job.id for r in results}
+
+
+def test_posting_window_hides_older_jobs(seeded):
+    conn = seeded
+    q = "data analyst sql dashboards"
+    assert "lever:cred:aa-2" in _ids(search.search(conn, q, limit=10))  # no window: evals rely on this
+    assert "lever:cred:aa-2" not in _ids(search.search(conn, q, filters=SearchFilters(posted_within_days=14), limit=10))
+    assert "lever:cred:aa-2" in _ids(search.search(conn, q, filters=SearchFilters(posted_within_days=30), limit=10))
+    week = search.search(conn, "engineer intern", filters=SearchFilters(posted_within_days=7), limit=10)
+    assert "lever:cred:aa-1" in _ids(week)
+
+
+def test_undated_jobs_are_hidden_unless_asked_for(seeded):
+    conn = seeded
+    row = conn.execute("SELECT posted_at_source, effective_posted_at FROM jobs WHERE id = 'greenhouse:groww:102'").fetchone()
+    assert row["posted_at_source"] == "unknown" and row["effective_posted_at"] is None  # first ingest of the board
+
+    q = "sales account executive"
+    assert "greenhouse:groww:102" not in _ids(search.search(conn, q, filters=SearchFilters(posted_within_days=14)))
+    shown = search.search(conn, q, filters=SearchFilters(posted_within_days=14, include_undated=True))
+    assert "greenhouse:groww:102" in _ids(shown)
+
+    # Once the board is known, a newly appearing undated job is dated by when we first saw it...
+    jobs = normalize_greenhouse(GREENHOUSE, "groww", "Groww")
+    late = jobs[1].model_copy(update={"id": "greenhouse:groww:103", "title": "Account Manager"})
+    sync_board(conn, "greenhouse", "groww", [*jobs, late])
+    conn.commit()
+    rows = {r["id"]: r for r in conn.execute(
+        "SELECT id, posted_at_source, effective_posted_at FROM jobs WHERE board = 'groww'")}
+    assert rows["greenhouse:groww:103"]["posted_at_source"] == "first_seen"
+    assert rows["greenhouse:groww:103"]["effective_posted_at"] is not None
+    # ...but a re-sync never "refreshes" the job that was already there undated.
+    assert rows["greenhouse:groww:102"]["posted_at_source"] == "unknown"
+
+
+def test_city_filters_use_canonical_names(seeded):
+    conn = seeded
+    ncr = search.search(conn, "analyst", filters=SearchFilters(cities=["Delhi NCR"]), limit=10)
+    assert _ids(ncr) == {"lever:cred:aa-2"}  # listed as "Gurgaon"
+    assert _ids(search.search(conn, "analyst", filters=SearchFilters(location="gurugram"), limit=10)) == {"lever:cred:aa-2"}
+    assert not search.search(conn, "analyst", filters=SearchFilters(cities=["Pune"]), limit=10)
+
+
+def test_store_results_filters_counts_and_disables_failing_boards(conn):
+    from app.ingest.pipeline import disabled_boards, store_results
+    from app.ingest.sources import normalize_lever
+    from tests.fixtures import LEVER, LEVER_US_REMOTE, days_ago
+
+    fresh, analyst = normalize_lever(LEVER, "cred", "CRED")
+    old = analyst.model_copy(update={"id": "lever:cred:old", "posted_at": days_ago(45)})
+    [us_only] = normalize_lever(LEVER_US_REMOTE, "cred", "CRED")
+    fetched = {("lever", "cred"): ("CRED", [fresh, analyst, old, us_only])}
+    failed = {("lever", "gone"): ("Gone", "HTTPStatusError: 404")}
+    stats = store_results(conn, fetched, failed, embed=False)
+    assert (stats.fetched, stats.kept, stats.too_old, stats.restricted_remote) == (4, 2, 1, 1)
+    assert stats.boards_ok == 1 and "lever:gone" in stats.boards_failed
+
+    for _ in range(5):
+        store_results(conn, {}, failed, embed=False)
+    assert ("lever", "gone") not in disabled_boards(conn)  # 6 failures
+    stats = store_results(conn, {}, failed, embed=False)
+    assert stats.boards_disabled == ["lever:gone"] and ("lever", "gone") in disabled_boards(conn)
+
+    store_results(conn, fetched, {}, embed=False)  # a good run resets a board's failure count
+    assert conn.execute("SELECT consecutive_failures FROM boards WHERE board = 'cred'").fetchone()["consecutive_failures"] == 0
+
+
+def test_age_out_and_prune_keep_saved_jobs(seeded):
+    from app.ingest.pipeline import age_out, prune
+
+    conn = seeded
+    conn.execute("UPDATE jobs SET effective_posted_at = now() - interval '40 days' WHERE id = 'lever:cred:aa-2'")
+    assert age_out(conn, 30) == 1
+    assert conn.execute("SELECT is_active FROM jobs WHERE id = 'lever:cred:aa-2'").fetchone()["is_active"] is False
+
+    uid = store.create_user(conn)
+    conn.execute("UPDATE jobs SET is_active = FALSE, last_seen_at = now() - interval '90 days' "
+                 "WHERE id IN ('lever:cred:aa-2', 'greenhouse:groww:101')")
+    assert store.record_feedback(conn, uid, "greenhouse:groww:101", "save")
+    assert prune(conn, 60) == 1  # aa-2 deleted; the saved job is kept
+    left = {r["id"] for r in conn.execute("SELECT id FROM jobs")}
+    assert "lever:cred:aa-2" not in left and "greenhouse:groww:101" in left
+    assert [j.id for j in store.saved_jobs(conn, uid)] == ["greenhouse:groww:101"]
