@@ -1,4 +1,5 @@
-"""Incremental ingestion: fetch boards -> upsert by content hash -> expire removed jobs -> embed changed jobs.
+"""Incremental ingestion: fetch boards -> drop old / out-of-scope postings -> upsert by content hash ->
+expire removed and aged-out jobs -> embed changed jobs -> prune long-gone jobs.
 
 Run:  python -m app.ingest.pipeline            (all boards in boards.json)
       python -m app.ingest.pipeline --all-locations
@@ -11,10 +12,12 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
+from app.config import get_settings
 from app.db import connection
 from app.embeddings import embed_passages, job_passage
 from app.ingest.sources import fetch_board, make_client
@@ -23,19 +26,28 @@ from app.models import Job
 
 log = logging.getLogger("ingest")
 BOARDS_FILE = Path(__file__).with_name("boards.json")
+KEEP_REMOTE = {"india", "global", "unspecified"}  # remote roles someone in India can take
+
+BoardKey = tuple[str, str]  # (source, board)
 
 
 @dataclass
 class IngestStats:
     boards_ok: int = 0
     boards_failed: dict[str, str] = field(default_factory=dict)
+    boards_skipped: int = 0  # disabled after repeated failures
+    boards_disabled: list[str] = field(default_factory=list)  # disabled by this run
     fetched: int = 0
     kept: int = 0
+    too_old: int = 0
+    restricted_remote: int = 0
     new: int = 0
     changed: int = 0
     unchanged: int = 0
     expired: int = 0
+    aged_out: int = 0
     embedded: int = 0
+    pruned: int = 0
     seconds: float = 0.0
 
 
@@ -47,16 +59,34 @@ def job_hash(j: Job) -> str:
     return content_hash(j.title, j.company, j.location, j.department, j.employment_type, j.is_remote, j.description)
 
 
+def drop_reason(job: Job, *, all_locations: bool, cutoff: datetime) -> str | None:
+    """Why a fetched posting is not stored, or None to keep it."""
+    if not job.title or not job.url:
+        return "incomplete"
+    if job.posted_at is not None and job.posted_at < cutoff:
+        return "too_old"
+    if all_locations or job.is_india or job.remote_scope in KEEP_REMOTE:
+        return None
+    return "restricted_remote" if job.remote_scope == "restricted" else "location"
+
+
+# effective_posted_at/posted_at_source in VALUES only matter for new rows. For an existing row a missing ATS
+# date keeps the stored value, so a re-sync never makes an undated job look new.
 UPSERT = """
 INSERT INTO jobs (id, source, board, company, title, location, is_remote, is_india, employment_type,
-                  department, url, description, content_hash, posted_at)
+                  department, url, description, content_hash, posted_at, effective_posted_at, posted_at_source,
+                  cities, remote_scope)
 VALUES (%(id)s, %(source)s, %(board)s, %(company)s, %(title)s, %(location)s, %(is_remote)s, %(is_india)s,
-        %(employment_type)s, %(department)s, %(url)s, %(description)s, %(hash)s, %(posted_at)s)
+        %(employment_type)s, %(department)s, %(url)s, %(description)s, %(hash)s, %(posted_at)s,
+        %(effective_posted_at)s, %(posted_at_source)s, %(cities)s, %(remote_scope)s)
 ON CONFLICT (id) DO UPDATE SET
     company = EXCLUDED.company, title = EXCLUDED.title, location = EXCLUDED.location,
     is_remote = EXCLUDED.is_remote, is_india = EXCLUDED.is_india,
     employment_type = EXCLUDED.employment_type, department = EXCLUDED.department,
     url = EXCLUDED.url, description = EXCLUDED.description, posted_at = EXCLUDED.posted_at,
+    effective_posted_at = COALESCE(EXCLUDED.posted_at, jobs.effective_posted_at),
+    posted_at_source = CASE WHEN EXCLUDED.posted_at IS NOT NULL THEN 'ats' ELSE jobs.posted_at_source END,
+    cities = EXCLUDED.cities, remote_scope = EXCLUDED.remote_scope,
     -- only a changed posting loses its embedding and gets re-embedded
     embedding = CASE WHEN jobs.content_hash = EXCLUDED.content_hash THEN jobs.embedding END,
     content_hash = EXCLUDED.content_hash,
@@ -65,12 +95,19 @@ ON CONFLICT (id) DO UPDATE SET
 """
 
 
-def sync_board(conn, source: str, board: str, jobs: list[Job]) -> tuple[int, int, int, int]:
+def board_known(conn, source: str, board: str) -> bool:
+    return conn.execute("SELECT 1 FROM boards WHERE source = %s AND board = %s", (source, board)).fetchone() is not None
+
+
+def sync_board(conn, source: str, board: str, jobs: list[Job], company: str | None = None) -> tuple[int, int, int, int]:
     """Upsert one board's current postings and deactivate ones that disappeared.
 
     Only called for boards that were fetched successfully, so a network failure never
     mass-expires a company's jobs.
     """
+    # On a board's first ingest every job is "first seen" now, so first_seen_at says nothing about its age.
+    known = board_known(conn, source, board)
+    now = datetime.now(timezone.utc)
     existing = {
         r["id"]: r["content_hash"]
         for r in conn.execute(
@@ -86,7 +123,13 @@ def sync_board(conn, source: str, board: str, jobs: list[Job]) -> tuple[int, int
             changed += 1
         else:
             unchanged += 1
-        rows.append({**j.model_dump(), "hash": h})
+        if j.posted_at is not None:
+            effective, src = j.posted_at, "ats"
+        elif known:
+            effective, src = now, "first_seen"
+        else:
+            effective, src = None, "unknown"
+        rows.append({**j.model_dump(), "hash": h, "effective_posted_at": effective, "posted_at_source": src})
     with conn.cursor() as cur:
         if rows:
             cur.executemany(UPSERT, rows)
@@ -96,7 +139,55 @@ def sync_board(conn, source: str, board: str, jobs: list[Job]) -> tuple[int, int
             (source, board, [j.id for j in jobs]),
         )
         expired = cur.rowcount
+        cur.execute(
+            """INSERT INTO boards (source, board, company, last_ok_at) VALUES (%s, %s, %s, now())
+               ON CONFLICT (source, board) DO UPDATE SET company = EXCLUDED.company, last_ok_at = now(),
+                   last_error = NULL, consecutive_failures = 0""",
+            (source, board, company or (jobs[0].company if jobs else board)),
+        )
     return new, changed, unchanged, expired
+
+
+def record_board_failure(conn, source: str, board: str, company: str, error: str) -> bool:
+    """Count a failed fetch; returns True when this failure disabled the board."""
+    max_failures = get_settings().board_max_failures
+    row = conn.execute(
+        """INSERT INTO boards (source, board, company, first_ingested_at, last_error, consecutive_failures)
+           VALUES (%s, %s, %s, now(), %s, 1)
+           ON CONFLICT (source, board) DO UPDATE SET last_error = EXCLUDED.last_error,
+               consecutive_failures = boards.consecutive_failures + 1
+           RETURNING consecutive_failures, disabled""",
+        (source, board, company, error),
+    ).fetchone()
+    if row["consecutive_failures"] >= max_failures and not row["disabled"]:
+        conn.execute("UPDATE boards SET disabled = TRUE WHERE source = %s AND board = %s", (source, board))
+        return True
+    return False
+
+
+def disabled_boards(conn) -> set[BoardKey]:
+    return {(r["source"], r["board"]) for r in conn.execute("SELECT source, board FROM boards WHERE disabled")}
+
+
+def age_out(conn, max_age_days: int) -> int:
+    """Deactivate jobs older than the window, including undated ones (aged by first_seen_at)."""
+    cur = conn.execute(
+        """UPDATE jobs SET is_active = FALSE
+           WHERE is_active AND COALESCE(effective_posted_at, first_seen_at) < now() - make_interval(days => %s::int)""",
+        (max_age_days,),
+    )
+    return cur.rowcount
+
+
+def prune(conn, after_days: int) -> int:
+    """Delete long-inactive jobs. Jobs with feedback are kept: deleting would cascade away a user's saved job."""
+    cur = conn.execute(
+        """DELETE FROM jobs j
+           WHERE NOT j.is_active AND j.last_seen_at < now() - make_interval(days => %s::int)
+             AND NOT EXISTS (SELECT 1 FROM feedback f WHERE f.job_id = j.id)""",
+        (after_days,),
+    )
+    return cur.rowcount
 
 
 def embed_pending(conn, batch: int = 128) -> int:
@@ -122,8 +213,50 @@ def embed_pending(conn, batch: int = 128) -> int:
         log.info("embedded %d jobs", total)
 
 
-def keep(job: Job, all_locations: bool) -> bool:
-    return all_locations or job.is_india or job.is_remote
+def store_results(
+    conn,
+    fetched: dict[BoardKey, tuple[str, list[Job]]],
+    failed: dict[BoardKey, tuple[str, str]],
+    *,
+    all_locations: bool = False,
+    embed: bool = True,
+    stats: IngestStats | None = None,
+) -> IngestStats:
+    """The database half of a run: sync fetched boards, record failures, expire, embed, prune."""
+    s = get_settings()
+    stats = stats or IngestStats()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=s.ingest_max_age_days)
+    for (source, board), (company, error) in failed.items():
+        stats.boards_failed[f"{source}:{board}"] = error
+        if record_board_failure(conn, source, board, company, error):
+            stats.boards_disabled.append(f"{source}:{board}")
+    conn.commit()
+    for (source, board), (company, jobs) in fetched.items():
+        stats.boards_ok += 1
+        stats.fetched += len(jobs)
+        kept = []
+        for j in jobs:
+            reason = drop_reason(j, all_locations=all_locations, cutoff=cutoff)
+            if reason is None:
+                kept.append(j)
+            elif reason == "too_old":
+                stats.too_old += 1
+            elif reason == "restricted_remote":
+                stats.restricted_remote += 1
+        stats.kept += len(kept)
+        n, c, u, e = sync_board(conn, source, board, kept, company)
+        stats.new += n
+        stats.changed += c
+        stats.unchanged += u
+        stats.expired += e
+        conn.commit()
+    stats.aged_out = age_out(conn, s.ingest_max_age_days)
+    conn.commit()
+    if embed:
+        stats.embedded = embed_pending(conn)
+    stats.pruned = prune(conn, s.prune_after_days)
+    conn.commit()
+    return stats
 
 
 def run_ingest(
@@ -132,40 +265,35 @@ def run_ingest(
     all_locations: bool = False,
     embed: bool = True,
     db_url: str | None = None,
-    workers: int = 8,
+    workers: int = 16,
 ) -> IngestStats:
     started = time.perf_counter()
     boards = boards if boards is not None else load_boards()
     stats = IngestStats()
 
+    with connection(db_url) as conn:  # short-lived: don't hold a pooled connection during the fetch
+        skip = disabled_boards(conn)
+    todo = [b for b in boards if (b["source"], b["board"]) not in skip]
+    stats.boards_skipped = len(boards) - len(todo)
+
+    fetched: dict[BoardKey, tuple[str, list[Job]]] = {}
+    failed: dict[BoardKey, tuple[str, str]] = {}
     with make_client() as client, ThreadPoolExecutor(workers) as pool:
         futures = {
-            (b["source"], b["board"]): pool.submit(fetch_board, client, b["source"], b["board"], b["company"])
-            for b in boards
+            (b["source"], b["board"]): (b["company"], pool.submit(fetch_board, client, b["source"], b["board"], b["company"]))
+            for b in todo
         }
-        fetched: dict[tuple[str, str], list[Job]] = {}
-        for key, fut in futures.items():
+        for key, (company, fut) in futures.items():
             try:
-                fetched[key] = fut.result()
-                stats.boards_ok += 1
+                fetched[key] = (company, fut.result())
             except Exception as e:  # one bad board must not stop the run
-                stats.boards_failed[f"{key[0]}:{key[1]}"] = f"{type(e).__name__}: {e}"[:200]
+                failed[key] = (company, f"{type(e).__name__}: {e}"[:200])
                 log.warning("board %s:%s failed: %s", key[0], key[1], e)
 
     with connection(db_url) as conn:
         run_id = conn.execute("INSERT INTO ingest_runs DEFAULT VALUES RETURNING id").fetchone()["id"]
-        for (source, board), jobs in fetched.items():
-            stats.fetched += len(jobs)
-            jobs = [j for j in jobs if keep(j, all_locations) and j.title and j.url]
-            stats.kept += len(jobs)
-            n, c, u, e = sync_board(conn, source, board, jobs)
-            stats.new += n
-            stats.changed += c
-            stats.unchanged += u
-            stats.expired += e
-            conn.commit()
-        if embed:
-            stats.embedded = embed_pending(conn)
+        conn.commit()
+        store_results(conn, fetched, failed, all_locations=all_locations, embed=embed, stats=stats)
         stats.seconds = round(time.perf_counter() - started, 1)
         conn.execute(
             "UPDATE ingest_runs SET finished_at = now(), stats = %s WHERE id = %s",

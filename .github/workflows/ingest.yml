@@ -4,6 +4,7 @@ name: Nightly ingest
 on:
   schedule:
     - cron: "30 0 * * *"   # 06:00 IST
+    - cron: "30 12 * * *"  # 18:00 IST: jobs posted during the day show up the same evening
   workflow_dispatch:
 
 jobs:

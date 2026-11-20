@@ -9,7 +9,7 @@ os.environ["DAILY_LLM_LIMIT"] = "1000"
 
 import pytest  # noqa: E402
 
-TABLES = "llm_usage_global, llm_usage, messages, feedback, users, ingest_runs, jobs"
+TABLES = "llm_usage_global, llm_usage, messages, feedback, users, ingest_runs, boards, jobs"
 
 
 @pytest.fixture(scope="session")
@@ -37,7 +37,7 @@ def conn(db_url):
 
 @pytest.fixture
 def seeded(conn):
-    """4 active jobs from fixture payloads (one per interesting case), embedded with the real model."""
+    """5 active jobs from fixture payloads (one per interesting case), embedded with the real model."""
     from app.ingest.pipeline import embed_pending, sync_board
     from app.ingest.sources import normalize_ashby, normalize_greenhouse, normalize_lever
     from tests.fixtures import ASHBY, GREENHOUSE, LEVER
@@ -46,5 +46,5 @@ def seeded(conn):
     sync_board(conn, "lever", "cred", normalize_lever(LEVER, "cred", "CRED"))
     sync_board(conn, "ashby", "sarvam", normalize_ashby(ASHBY, "sarvam", "Sarvam AI"))
     conn.commit()
-    assert embed_pending(conn) == 4
+    assert embed_pending(conn) == 5
     return conn

@@ -20,7 +20,11 @@ class Job(BaseModel):
     department: str = ""
     url: str
     description: str = ""
+    # From the ATS at ingest; read back from the DB it is the best-known posted time (effective_posted_at).
     posted_at: datetime | None = None
+    posted_at_source: str = ""  # ats | first_seen | unknown (DB rows only)
+    cities: list[str] = Field(default_factory=list)  # canonical names incl. regions, e.g. ["Gurugram", "Delhi NCR"]
+    remote_scope: str = ""  # "" | india | global | unspecified | restricted
 
 
 Seniority = Literal["intern", "entry", "mid", "senior", "lead"]
@@ -58,17 +62,23 @@ class Preferences(BaseModel):
     india_only: bool | None = Field(default=None, description="Only show roles located in India")
     roles: list[str] = Field(default_factory=list, description="Preferred role titles")
     avoid_companies: list[str] = Field(default_factory=list, description="Companies to never recommend")
+    posted_within_days: int | None = Field(
+        default=None, ge=1, le=30, description="Only show jobs posted in the last N days (7 = this week)"
+    )
     notes: list[str] = Field(default_factory=list, description="Other durable facts the user shared")
 
 
 class SearchFilters(BaseModel):
     india_only: bool = False
     remote_only: bool = False
-    location: str | None = None
+    location: str | None = None  # free text; mapped to canonical cities when possible
+    cities: list[str] = Field(default_factory=list)  # canonical names, matched with array overlap
     company: str | None = None
     exclude_job_ids: list[str] = Field(default_factory=list)
     exclude_companies: list[str] = Field(default_factory=list)
     title_regex: str | None = None  # Postgres ~* pattern, used by the early-career candidate source
+    posted_within_days: int | None = None  # None = no freshness filter (evals rely on this default)
+    include_undated: bool = False  # also show jobs whose posted date is unknown
 
 
 class ScoredJob(BaseModel):

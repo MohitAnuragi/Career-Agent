@@ -7,6 +7,7 @@ from uuid import UUID
 from psycopg.types.json import Jsonb
 
 from app.config import get_settings
+from app.ingest.cities import canonical_list
 from app.models import CandidateProfile, Job, Preferences
 from app.search import JOB_COLS
 
@@ -63,6 +64,7 @@ def update_preferences(conn, user_id: str, changes: dict) -> Preferences:
             current[key] = merged
         else:
             current[key] = value
+    current["locations"] = canonical_list(current["locations"])  # "gurgaon" and "Gurugram" are one city
     prefs = Preferences(**current)
     conn.execute("UPDATE users SET preferences = %s WHERE id = %s", [Jsonb(prefs.model_dump()), user_id])
     conn.commit()
@@ -70,6 +72,7 @@ def update_preferences(conn, user_id: str, changes: dict) -> Preferences:
 
 
 def set_preferences(conn, user_id: str, prefs: Preferences) -> Preferences:
+    prefs = prefs.model_copy(update={"locations": canonical_list(prefs.locations)})
     conn.execute("UPDATE users SET preferences = %s WHERE id = %s", [Jsonb(prefs.model_dump()), user_id])
     conn.commit()
     return prefs

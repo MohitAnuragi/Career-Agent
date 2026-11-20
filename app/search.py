@@ -8,45 +8,45 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import Literal
 
 from app.config import get_settings
 from app.embeddings import embed_query
+from app.ingest.cities import canonical_cities, canonical_list, strip_cities
 from app.llm.base import LLM
 from app.models import CandidateProfile, Job, Preferences, RerankResult, ScoredJob, SearchFilters
 
 Method = Literal["keyword", "vector", "hybrid", "hybrid_rerank"]
 METHODS: tuple[Method, ...] = ("keyword", "vector", "hybrid", "hybrid_rerank")
 
+# posted_at is read back as the best-known posted time; every column is a plain name (store.py prefixes them).
 JOB_COLS = (
     "id, source, board, company, title, location, is_remote, is_india, employment_type, "
-    "department, url, description, posted_at"
+    "department, url, description, effective_posted_at AS posted_at, posted_at_source, cities, remote_scope"
 )
 _TOKEN = re.compile(r"[a-z0-9]+")
+Sort = Literal["relevance", "newest"]
 
-# Postings use old and new city names interchangeably ("Bangalore" vs "Bengaluru").
-CITY_ALIASES = [
-    {"bengaluru", "bangalore"},
-    {"gurugram", "gurgaon"},
-    {"mumbai", "bombay"},
-    {"delhi", "new delhi", "ncr"},
-    {"chennai", "madras"},
-    {"kolkata", "calcutta"},
-]
 # A typed query asking for early-career roles ("internships in Pune", "new grad roles").
 _EARLY_QUERY = re.compile(r"\b(interns?|internships?|new grads?|graduates?|freshers?|entry[- ]level|trainees?)\b", re.I)
 
 
-def location_patterns(location: str) -> list[str]:
-    loc = location.lower().strip()
-    for group in CITY_ALIASES:
-        if loc in group:
-            return [f"%{name}%" for name in sorted(group)]
-    return [f"%{loc}%"]
-
-
 def is_early_career_query(query: str) -> bool:
     return bool(_EARLY_QUERY.search(query))
+
+
+def filter_cities(f: SearchFilters) -> tuple[list[str], str | None]:
+    """Canonical cities to match, plus a leftover free-text location that isn't a known city."""
+    cities = canonical_list(f.cities)
+    loose = None
+    if f.location:
+        mapped = canonical_cities(f.location)
+        if mapped:
+            cities = canonical_list([*cities, *mapped])
+        else:
+            loose = f.location.strip()
+    return cities, loose
 
 
 # ---------------------------------------------------------------- SQL helpers
@@ -56,9 +56,18 @@ def _where(f: SearchFilters) -> tuple[str, list]:
         clauses.append("is_india")
     if f.remote_only:
         clauses.append("is_remote")
-    if f.location:
-        clauses.append("location ILIKE ANY(%s)")
-        params.append(location_patterns(f.location))
+    cities, loose = filter_cities(f)
+    if cities:
+        clauses.append("cities && %s::text[]")
+        params.append(cities)
+    if loose:
+        clauses.append("location ILIKE %s")
+        params.append(f"%{loose}%")
+    if f.posted_within_days:
+        clauses.append(
+            "(effective_posted_at >= now() - make_interval(days => %s::int) OR (%s AND posted_at_source = 'unknown'))"
+        )
+        params += [f.posted_within_days, f.include_undated]
     if f.company:
         clauses.append("company ILIKE %s")
         params.append(f"%{f.company}%")
@@ -126,13 +135,48 @@ def rrf(rankings: list[list[str]], k: int = 60) -> dict[str, float]:
     return scores
 
 
+def location_match(job: Job, locations: list[str]) -> bool:
+    if set(canonical_list(locations)) & set(job.cities):
+        return True
+    loc = job.location.lower()
+    return any(p.lower() in loc for p in locations)
+
+
+FRESH_BOOST_DAYS = 3
+
+
+def freshness_boost(job: Job, now: datetime | None = None) -> float:
+    """Tiny nudge for postings from the last few days; small enough that relevance still dominates."""
+    if job.posted_at is None:
+        return 1.0
+    age = (now or datetime.now(timezone.utc)) - job.posted_at
+    return 1.05 if age.days < FRESH_BOOST_DAYS else 1.0
+
+
+def dedupe_key(job: Job) -> tuple:
+    """Same company + same title (ignoring a city suffix) + same cities = one card."""
+    title = " ".join(_TOKEN.findall(strip_cities(job.title).lower()))
+    place = tuple(sorted(job.cities)) or (job.location.lower(),)
+    return job.company.lower(), title, place
+
+
+def dedupe(results: list[ScoredJob]) -> list[ScoredJob]:
+    seen: set[tuple] = set()
+    out = []
+    for r in results:
+        key = dedupe_key(r.job)
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+
 def preference_boost(job: Job, prefs: Preferences | None) -> float:
     """Multiplicative boost from long-term memory. Kept small so relevance still dominates."""
     if not prefs:
         return 1.0
     boost = 1.0
-    loc = job.location.lower()
-    if prefs.locations and any(p.lower() in loc for p in prefs.locations):
+    if prefs.locations and location_match(job, prefs.locations):
         boost += 0.15
     if prefs.remote_ok and job.is_remote:
         boost += 0.05
@@ -204,8 +248,10 @@ def search(
     profile: CandidateProfile | None = None,
     query_vector=None,
     early_career: bool = False,
+    sort: Sort = "relevance",
 ) -> list[ScoredJob]:
     s = get_settings()
+    now = datetime.now(timezone.utc)
     filters = apply_preferences(filters or SearchFilters(), prefs)
     pool = max(s.candidate_pool, limit)
     early_query = is_early_career_query(query)
@@ -245,14 +291,18 @@ def search(
         results.append(
             ScoredJob(
                 job=job,
-                score=score * preference_boost(job, prefs)
+                score=score * preference_boost(job, prefs) * freshness_boost(job, now)
                 * seniority_fit(job, profile, target_level=0 if early_query else None),
                 keyword_rank=kw_rank.get(doc_id),
                 vector_rank=vec_rank.get(doc_id),
             )
         )
     results.sort(key=lambda r: (-r.score, r.job.id))
+    results = dedupe(results)
 
+    if sort == "newest":  # ordering by date makes an LLM relevance pass pointless, so it's skipped
+        results.sort(key=lambda r: (r.job.posted_at is None, -(r.job.posted_at or now).timestamp(), -r.score))
+        return results[:limit]
     if method == "hybrid_rerank":
         if llm is None:
             raise ValueError("hybrid_rerank needs an llm")
