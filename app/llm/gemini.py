@@ -45,7 +45,12 @@ class GeminiLLM:
             delay *= 2
 
     # ------------------------------------------------------------------ structured / text
-    def structured(self, prompt: str, schema: type[T], *, system: str | None = None) -> T:
+    def structured_pdf(self, pdf: bytes, prompt: str, schema: type[T], *, system: str | None = None) -> T:
+        """Structured output from a PDF read by the model itself (layout-aware, works on scanned pages)."""
+        return self.structured([types.Part.from_bytes(data=pdf, mime_type="application/pdf"), prompt], schema,
+                               system=system)
+
+    def structured(self, prompt: Any, schema: type[T], *, system: str | None = None) -> T:
         resp = self._call(
             prompt,
             types.GenerateContentConfig(

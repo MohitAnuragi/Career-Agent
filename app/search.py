@@ -7,15 +7,20 @@
 """
 from __future__ import annotations
 
+import math
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Literal
+
+import numpy as np
 
 from app.config import get_settings
 from app.embeddings import embed_query
 from app.ingest.cities import canonical_cities, canonical_list, strip_cities
-from app.llm.base import LLM
-from app.models import CandidateProfile, Job, Preferences, RerankResult, ScoredJob, SearchFilters
+from app.ingest.extract import canonical_skills, find_skills, focus_text
+from app.llm.base import LLM, LLMError
+from app.models import CandidateProfile, Job, Preferences, RerankItem, RerankResult, ScoredJob, SearchFilters
 
 Method = Literal["keyword", "vector", "hybrid", "hybrid_rerank"]
 METHODS: tuple[Method, ...] = ("keyword", "vector", "hybrid", "hybrid_rerank")
@@ -23,7 +28,8 @@ METHODS: tuple[Method, ...] = ("keyword", "vector", "hybrid", "hybrid_rerank")
 # posted_at is read back as the best-known posted time; every column is a plain name (store.py prefixes them).
 JOB_COLS = (
     "id, source, board, company, title, location, is_remote, is_india, employment_type, "
-    "department, url, description, effective_posted_at AS posted_at, posted_at_source, cities, remote_scope"
+    "department, url, description, effective_posted_at AS posted_at, posted_at_source, cities, remote_scope, "
+    "skills, min_years"
 )
 _TOKEN = re.compile(r"[a-z0-9]+")
 Sort = Literal["relevance", "newest"]
@@ -127,11 +133,15 @@ def fetch_jobs(conn, ids: list[str]) -> dict[str, Job]:
 
 
 # ---------------------------------------------------------------- ranking
-def rrf(rankings: list[list[str]], k: int = 60) -> dict[str, float]:
+def rrf(rankings: list[list[str]], k: int = 60, weights: list[float] | None = None) -> dict[str, float]:
+    """Reciprocal Rank Fusion; `weights` scales each list's contribution (default: all 1.0)."""
     scores: dict[str, float] = {}
-    for ranking in rankings:
+    for i, ranking in enumerate(rankings):
+        w = 1.0 if weights is None else weights[i]
+        if w == 0:
+            continue
         for rank, doc in enumerate(ranking, start=1):
-            scores[doc] = scores.get(doc, 0.0) + 1.0 / (k + rank)
+            scores[doc] = scores.get(doc, 0.0) + w / (k + rank)
     return scores
 
 
@@ -225,6 +235,40 @@ def seniority_fit(job: Job, profile: CandidateProfile | None, *, target_level: i
     return {1: 0.8, 2: 0.6, 3: 0.45}.get(gap, 0.3)
 
 
+def experience_fit(job: Job, profile: CandidateProfile | None, *, target_years: float | None = None) -> float:
+    """Demote postings that ask for clearly more experience than the candidate has.
+
+    Title words miss most of these ("Software Engineer" asking for 5+ years). A year of slack is allowed,
+    since postings overstate requirements. Without a profile, an early-career query counts as 0 years.
+    """
+    have = profile.years_experience if profile else target_years
+    if have is None or job.min_years is None:
+        return 1.0
+    gap = job.min_years - have
+    if gap <= 1:
+        return 1.0
+    if gap <= 2:
+        return 0.85
+    if gap <= 4:
+        return 0.65
+    return 0.45
+
+
+FIT_FLOOR = 0.2  # seniority x experience penalties stack; keep a strong match from vanishing entirely
+
+
+def skill_fit(job: Job, wanted: set[str]) -> tuple[float, list[str]]:
+    """Up to +20% for postings that ask for the candidate's (or the query's) skills, plus the shared skills.
+
+    Only a boost, never a penalty: the tags come from a fixed vocabulary, so a posting with no tags or other
+    skills isn't necessarily a poor match.
+    """
+    if not wanted or not job.skills:
+        return 1.0, []
+    shared = [sk for sk in job.skills if sk in wanted]
+    return 1.0 + 0.2 * min(1.0, len(shared) / min(len(job.skills), 6)), shared
+
+
 def apply_preferences(filters: SearchFilters, prefs: Preferences | None) -> SearchFilters:
     if not prefs:
         return filters
@@ -276,11 +320,14 @@ def search(
     elif method == "vector":
         scores = {d: 1.0 / (s.rrf_k + r) for r, d in enumerate(vec, 1)}
     else:
-        scores = rrf([kw, vec, *extra], k=s.rrf_k)
+        # The keyword list is much weaker than the vector list (see evals/README.md), so it counts for less.
+        scores = rrf([kw, vec, *extra], k=s.rrf_k,
+                     weights=[s.rrf_keyword_weight, 1.0, *([s.rrf_early_weight] * len(extra))])
 
     jobs = fetch_jobs(conn, list(scores))
     kw_rank = {d: r for r, d in enumerate(kw, 1)}
     vec_rank = {d: r for r, d in enumerate(vec, 1)}
+    wanted = set(canonical_skills(profile.skills)) if profile else set(find_skills(query))
     results = []
     for doc_id, score in scores.items():
         job = jobs.get(doc_id)
@@ -288,13 +335,16 @@ def search(
             continue
         if prefs and prefs.remote_ok is False and job.is_remote:
             continue
+        fit = max(FIT_FLOOR, seniority_fit(job, profile, target_level=0 if early_query else None)
+                  * experience_fit(job, profile, target_years=0 if early_query else None))
+        skills_boost, shared = skill_fit(job, wanted)
         results.append(
             ScoredJob(
                 job=job,
-                score=score * preference_boost(job, prefs) * freshness_boost(job, now)
-                * seniority_fit(job, profile, target_level=0 if early_query else None),
+                score=score * preference_boost(job, prefs) * freshness_boost(job, now) * fit * skills_boost,
                 keyword_rank=kw_rank.get(doc_id),
                 vector_rank=vec_rank.get(doc_id),
+                matched_skills=shared,
             )
         )
     results.sort(key=lambda r: (-r.score, r.job.id))
@@ -319,23 +369,60 @@ RERANK_SYSTEM = (
 )
 
 
-def rerank(llm: LLM, query: str, candidates: list[ScoredJob], profile: CandidateProfile | None) -> list[ScoredJob]:
-    if not candidates:
-        return []
-    listing = "\n\n".join(
-        f"[{c.job.id}] {c.job.title} | {c.job.company} | {c.job.location or 'n/a'}\n{c.job.description[:700]}"
-        for c in candidates
-    )
+RERANK_TEXT_CHARS = 800
+
+
+def rerank_calls(n: int | None = None) -> int:
+    """LLM calls one rerank of the top `n` (default: rerank_top_n) makes; the daily caps charge this many."""
+    s = get_settings()
+    n = s.rerank_top_n if n is None else n
+    return max(1, math.ceil(n / s.rerank_batch_size))
+
+
+def _rerank_listing(c: ScoredJob) -> str:
+    j = c.job
+    need = f"Requires {j.min_years}+ years of experience\n" if j.min_years else ""
+    # Role and requirement sections first: a posting's first 800 raw characters are often the company pitch.
+    return f"[{j.id}] {j.title} | {j.company} | {j.location or 'n/a'}\n{need}{focus_text(j.description)[:RERANK_TEXT_CHARS]}"
+
+
+def _grade(llm: LLM, query: str, batch: list[ScoredJob], profile: CandidateProfile | None) -> list[RerankItem]:
+    listing = "\n\n".join(_rerank_listing(c) for c in batch)
     who = f"<profile>{profile.model_dump_json()}</profile>\n" if profile else ""
     prompt = f"{who}<query>{query}</query>\n<jobs>\n{listing}\n</jobs>\nScore each job's relevance 0-10."
-    result = llm.structured(prompt, RerankResult, system=RERANK_SYSTEM)
+    return llm.structured(prompt, RerankResult, system=RERANK_SYSTEM).items
+
+
+def rerank(llm: LLM, query: str, candidates: list[ScoredJob], profile: CandidateProfile | None) -> list[ScoredJob]:
+    """LLM grades 0-10 with a reason. More than `rerank_batch_size` candidates are graded in parallel batches;
+    batches are interleaved by rank (1, 3, 5... / 2, 4, 6...) so each one spans the whole list and the grades
+    stay comparable. Ties keep retrieval order; a failed batch keeps its jobs ungraded unless every batch fails."""
+    if not candidates:
+        return []
+    n_batches = rerank_calls(len(candidates))
+    batches = [candidates[i::n_batches] for i in range(n_batches)]
+    if n_batches == 1:
+        outcomes: list = [_grade(llm, query, batches[0], profile)]
+    else:
+        with ThreadPoolExecutor(n_batches) as pool:
+            futures = [pool.submit(_grade, llm, query, b, profile) for b in batches]
+            outcomes = []
+            for f in futures:
+                try:
+                    outcomes.append(f.result())
+                except LLMError as e:
+                    outcomes.append(e)
+        if all(isinstance(o, LLMError) for o in outcomes):
+            raise outcomes[0]
+    items = [it for o in outcomes if not isinstance(o, LLMError) for it in o]
 
     by_id = {c.job.id: c for c in candidates}
+    position = {c.job.id: i for i, c in enumerate(candidates)}
     order: list[ScoredJob] = []
     seen: set[str] = set()
     graded = sorted(
-        (it for it in result.items if it.job_id in by_id),  # ignore hallucinated ids
-        key=lambda it: -it.relevance,
+        (it for it in items if it.job_id in by_id),  # ignore hallucinated ids
+        key=lambda it: (-it.relevance, position[it.job_id]),
     )
     for it in graded:
         if it.job_id in seen:
@@ -352,8 +439,54 @@ def rerank(llm: LLM, query: str, candidates: list[ScoredJob], profile: Candidate
 
 # ---------------------------------------------------------------- recommendations
 def profile_query(profile: CandidateProfile, prefs: Preferences | None) -> str:
+    """Keyword-side query for the feed: target roles and the top skills.
+
+    The vector side uses the full profile embedding, so this stays short: a 40-term OR query over every skill
+    plus the word "mid" or "intern" matched almost anything. Seniority is handled by seniority_fit.
+    """
     roles = (prefs.roles if prefs and prefs.roles else []) or profile.target_roles
-    return " ".join([*roles, *profile.skills[:12], profile.seniority])
+    return " ".join([*roles, *profile.skills[:6]])
+
+
+# Rocchio weights: how far saved jobs pull the profile vector, and dismissed jobs push it away. Dismissals are
+# often about location or company rather than the work, so they count for less.
+SAVED_WEIGHT = 0.5
+DISMISSED_WEIGHT = 0.15
+FEEDBACK_WINDOW = 30  # most recent saves / dismissals used
+
+
+def feedback_centroids(conn, user_id: str):
+    """Mean embedding of the user's recent saved and dismissed jobs (None when there are none)."""
+    out = {}
+    for action in ("save", "dismiss"):
+        row = conn.execute(
+            """SELECT avg(embedding) AS v FROM (
+                   SELECT j.embedding FROM feedback f JOIN jobs j ON j.id = f.job_id
+                   WHERE f.user_id = %s AND f.action = %s AND j.embedding IS NOT NULL
+                   ORDER BY f.created_at DESC LIMIT %s) t""",
+            [user_id, action, FEEDBACK_WINDOW],
+        ).fetchone()
+        out[action] = None if row["v"] is None else as_array(row["v"])
+    return out["save"], out["dismiss"]
+
+
+def as_array(v) -> np.ndarray:
+    """pgvector returns its own Vector type for some queries (e.g. avg()); numpy for the maths."""
+    return np.asarray(v.to_numpy() if hasattr(v, "to_numpy") else v, dtype=np.float32)
+
+
+def personal_vector(profile_vector, saved=None, dismissed=None):
+    """Profile embedding moved toward saved jobs and away from dismissed ones, re-normalised."""
+    base = as_array(profile_vector)
+    if saved is None and dismissed is None:
+        return profile_vector
+    v = base.copy()
+    if saved is not None:
+        v = v + SAVED_WEIGHT * as_array(saved)
+    if dismissed is not None:
+        v = v - DISMISSED_WEIGHT * as_array(dismissed)
+    norm = float(np.linalg.norm(v))
+    return v / norm if norm else base
 
 
 def recommend(
@@ -365,8 +498,14 @@ def recommend(
     filters: SearchFilters | None = None,
     limit: int = 20,
     llm: LLM | None = None,
+    user_id: str | None = None,
 ) -> list[ScoredJob]:
-    """Personalised feed: hybrid retrieval seeded by the profile instead of a typed query."""
+    """Personalised feed: hybrid retrieval seeded by the profile instead of a typed query.
+
+    With a `user_id`, the profile vector learns from that user's saves and dismissals.
+    """
+    if user_id is not None:
+        profile_vector = personal_vector(profile_vector, *feedback_centroids(conn, user_id))
     return search(
         conn,
         profile_query(profile, prefs),

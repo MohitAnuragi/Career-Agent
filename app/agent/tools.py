@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app import matching, search, store
 from app.config import get_settings
+from app.ingest.extract import focus_text
 from app.llm.base import LLM, ToolSpec
 from app.models import CandidateProfile, Job, Preferences, ScoredJob, SearchFilters
 
@@ -119,7 +120,8 @@ def search_jobs(ctx: ToolContext, a: SearchArgs) -> dict:
 
 def recommend_jobs(ctx: ToolContext, a: RecommendArgs) -> dict:
     profile = _need_profile(ctx)
-    ctx.charge()
+    for _ in range(search.rerank_calls()):  # one charge per rerank batch
+        ctx.charge()
     results = search.recommend(
         ctx.conn,
         profile,
@@ -128,6 +130,7 @@ def recommend_jobs(ctx: ToolContext, a: RecommendArgs) -> dict:
         filters=SearchFilters(exclude_job_ids=_dismissed(ctx), posted_within_days=_window(ctx)),
         limit=a.limit,
         llm=ctx.llm,
+        user_id=ctx.user_id,
     )
     return {"count": len(results), "jobs": [_card(r, ctx) for r in results]}
 
@@ -135,7 +138,7 @@ def recommend_jobs(ctx: ToolContext, a: RecommendArgs) -> dict:
 def get_job_details(ctx: ToolContext, a: JobIdArgs) -> dict:
     job = _need_job(ctx, a.job_id)
     return {**_card(job, ctx), "department": job.department, "type": job.employment_type,
-            "description": job.description[:3000]}
+            "description": focus_text(job.description)[:3000]}
 
 
 def explain_match(ctx: ToolContext, a: JobIdArgs) -> dict:
@@ -175,7 +178,7 @@ def draft_application_answer(ctx: ToolContext, a: DraftArgs) -> dict:
     ctx.charge()
     prompt = (
         f"<profile>{profile.model_dump_json()}</profile>\n"
-        f"<job>{job.title} at {job.company}\n{job.description[:3000]}</job>\n"
+        f"<job>{job.title} at {job.company}\n{focus_text(job.description)[:3000]}</job>\n"
         f"Write the candidate's answer to: {a.question}\n"
         "Under 150 words, first person, specific to this job, using only facts from the profile."
     )

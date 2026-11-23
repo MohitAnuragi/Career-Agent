@@ -57,6 +57,23 @@ def test_full_flow(client):
     assert len(client.get("/api/chat", headers=h).json()["messages"]) == 2
 
 
+def test_edit_profile_reembeds_without_an_ai_call(client):
+    uid = client.post("/api/users").json()["user_id"]
+    h = {"X-User-Id": uid}
+    prof = client.post("/api/profile", headers=h, data={"text": RESUME}).json()["profile"]
+    edited = {**prof, "seniority": "entry", "years_experience": 1.5,
+              "skills": [" Python ", "python", "LLM", "RAG"], "target_roles": ["AI Engineer"]}
+    out = client.put("/api/profile", headers=h, json=edited).json()["profile"]
+    assert out["skills"] == ["Python", "LLM", "RAG"] and out["seniority"] == "entry"
+    assert client.get("/api/profile", headers=h).json()["profile"] == out
+    recs = client.get("/api/recommendations", headers=h, params={"rerank": False}).json()["jobs"]
+    assert recs[0]["id"] == "ashby:sarvam:ab-1"  # the AI role now leads, not the Android internship
+    assert recs[0]["matched_skills"] and "skills" in recs[0] and "min_years" in recs[0]
+    empty = {**edited, "skills": [], "target_roles": [" "]}
+    assert client.put("/api/profile", headers=h, json=empty).status_code == 422
+    assert client.put("/api/profile", json=edited).status_code == 401
+
+
 def test_admin_ingest_requires_token(client):
     assert client.post("/admin/ingest").status_code == 403
 
@@ -78,3 +95,38 @@ def test_search_window_cities_and_sort(client):
     cities = {c["city"]: c for c in stats["cities"]}
     assert cities["Delhi NCR"]["jobs"] == 1 and cities["Delhi NCR"]["fresh"] == 0
     assert "Delhi NCR" in stats["featured_cities"] and stats["boards"]["total"] == 3
+
+
+def test_plain_language_search_and_feed_filters(client):
+    d = client.get("/api/search", params={"q": "data analyst jobs in gurgaon", "posted_within_days": 30}).json()
+    assert d["understood"] == {"query": "data analyst", "cities": ["Gurugram"], "remote": False, "india": False}
+    assert [j["id"] for j in d["jobs"]] == ["lever:cred:aa-2"]
+    assert client.get("/api/search", params={"q": "data analyst", "parse": False}).json()["understood"] is None
+
+    uid = client.post("/api/users").json()["user_id"]
+    h = {"X-User-Id": uid}
+    client.post("/api/profile", headers=h, data={"text": RESUME})
+    feed = client.get("/api/recommendations", headers=h,
+                      params={"cities": "Delhi NCR", "posted_within_days": 30, "rerank": False}).json()["jobs"]
+    assert [j["id"] for j in feed] == ["lever:cred:aa-2"]
+    assert all(j["remote"] for j in client.get("/api/recommendations", headers=h,
+                                                 params={"remote_only": True, "rerank": False}).json()["jobs"])
+
+
+def test_application_tracker_and_dismiss_reasons(client):
+    h = {"X-User-Id": client.post("/api/users").json()["user_id"]}
+    job = "lever:cred:aa-1"
+    assert client.put(f"/api/saved/{job}", headers=h, json={"status": "applied"}).status_code == 404  # not saved
+    client.post("/api/feedback", headers=h, json={"job_id": job, "action": "save"})
+    assert client.get("/api/saved", headers=h).json()["jobs"][0]["status"] == "saved"
+    assert client.put(f"/api/saved/{job}", headers=h, json={"status": "interviewing"}).json()["ok"]
+    client.post("/api/feedback", headers=h, json={"job_id": job, "action": "save"})  # re-save keeps the status
+    assert client.get("/api/saved", headers=h).json()["jobs"][0]["status"] == "interviewing"
+    assert client.put(f"/api/saved/{job}", headers=h, json={"status": "hired!"}).status_code == 422
+
+    company = client.get(f"/api/jobs/{job}").json()["company"]
+    out = client.post("/api/feedback", headers=h, json={"job_id": job, "action": "dismiss", "reason": "company"}).json()
+    assert company in out["preferences"]["avoid_companies"]
+    assert client.get("/api/saved", headers=h).json()["jobs"] == []
+    assert client.post("/api/feedback", headers=h,
+                       json={"job_id": job, "action": "dismiss", "reason": "bored"}).status_code == 422

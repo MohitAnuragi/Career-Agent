@@ -6,9 +6,25 @@ import time
 
 from app import search
 from app.db import connection
+from app.llm import LLMError
 from app.models import SearchFilters
 from evals.common import QRELS, RESULTS, ROOT, eval_db_url, load_json, write_json
 from evals.metrics import mrr, ndcg_at_k, percentile, recall_at_k, summarise
+
+
+def run(conn, q: dict, method: str, llm, attempts: int = 4):
+    """One query. A rerank that times out or hits a 503 is retried; latency is measured on the attempt that worked."""
+    for n in range(attempts):
+        t0 = time.perf_counter()
+        try:
+            results = search.search(conn, q["query"], method=method, limit=20, llm=llm,
+                                    filters=SearchFilters(india_only=q.get("india_only", False)))
+            return results, (time.perf_counter() - t0) * 1000
+        except LLMError as e:
+            if n == attempts - 1:
+                raise
+            print(f"{q['id']} {method}: {e}; retrying", flush=True)
+            time.sleep(20 * (n + 1))
 
 
 def main() -> None:
@@ -34,10 +50,8 @@ def main() -> None:
             for q in queries:
                 if q["id"] not in qrels:
                     continue
-                t0 = time.perf_counter()
-                results = search.search(conn, q["query"], method=method, limit=20, llm=llm,
-                                        filters=SearchFilters(india_only=q.get("india_only", False)))
-                latencies.append((time.perf_counter() - t0) * 1000)
+                results, ms = run(conn, q, method, llm)
+                latencies.append(ms)
                 ranked = [r.job.id for r in results]
                 gold = qrels[q["id"]]
                 per_q.append({"ndcg@10": ndcg_at_k(ranked, gold, 10), "recall@20": recall_at_k(ranked, gold, 20),

@@ -166,3 +166,47 @@ def test_age_out_and_prune_keep_saved_jobs(seeded):
     left = {r["id"] for r in conn.execute("SELECT id FROM jobs")}
     assert "lever:cred:aa-2" not in left and "greenhouse:groww:101" in left
     assert [j.id for j in store.saved_jobs(conn, uid)] == ["greenhouse:groww:101"]
+
+
+def test_ingest_stores_skills_and_years_and_reembeds_old_versions(seeded):
+    from app.embeddings import EMBED_VERSION
+    from app.ingest.pipeline import reprocess
+
+    conn = seeded
+    row = conn.execute("SELECT skills, min_years, embedding_version FROM jobs WHERE id = 'greenhouse:groww:101'").fetchone()
+    assert {"Python", "PostgreSQL"} <= set(row["skills"]) and row["min_years"] is None
+    assert row["embedding_version"] == EMBED_VERSION
+
+    # A job embedded with an older passage format is re-embedded even though its content didn't change.
+    conn.execute("UPDATE jobs SET embedding_version = 1, skills = '{}', min_years = 9 WHERE id = 'lever:cred:aa-1'")
+    conn.commit()
+    assert reprocess(conn) == {"derived": 5, "embedded": 1}  # every stored row; only the outdated one re-embedded
+    row = conn.execute("SELECT skills, min_years, embedding_version FROM jobs WHERE id = 'lever:cred:aa-1'").fetchone()
+    assert {"Kotlin", "Jetpack Compose"} <= set(row["skills"]) and row["min_years"] is None
+    assert row["embedding_version"] == EMBED_VERSION
+
+
+def test_feed_learns_from_saved_jobs(seeded):
+    import numpy as np
+
+    from app.models import CandidateProfile
+    from app.search import feedback_centroids, recommend
+
+    conn = seeded
+    uid = store.create_user(conn)
+    assert feedback_centroids(conn, uid) == (None, None)
+    store.record_feedback(conn, uid, "ashby:sarvam:ab-1", "save")
+    saved, dismissed = feedback_centroids(conn, uid)
+    assert saved is not None and dismissed is None
+    stored = conn.execute("SELECT embedding FROM jobs WHERE id = 'ashby:sarvam:ab-1'").fetchone()["embedding"]
+    assert np.allclose(saved, search.as_array(stored), atol=1e-5)  # the mean of one job is that job
+
+    profile = CandidateProfile(name="", headline="Android developer", seniority="intern", years_experience=0.5,
+                               skills=["Kotlin"], target_roles=["Android Developer"])
+    from app.embeddings import embed_query
+    vec = embed_query(profile.as_search_text())
+    plain = recommend(conn, profile, vec, limit=5)
+    learned = recommend(conn, profile, vec, limit=5, user_id=uid)
+    rank = lambda rs: [r.job.id for r in rs].index("ashby:sarvam:ab-1")  # noqa: E731
+    assert rank(learned) <= rank(plain)
+    assert plain[0].job.id == "lever:cred:aa-1" and "Kotlin" in plain[0].matched_skills

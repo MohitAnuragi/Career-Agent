@@ -39,6 +39,12 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS effective_posted_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS posted_at_source TEXT NOT NULL DEFAULT 'unknown';  -- ats | first_seen | unknown
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cities TEXT[] NOT NULL DEFAULT '{}';               -- canonical, incl. "Delhi NCR"
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS remote_scope TEXT NOT NULL DEFAULT '';             -- '' | india | global | unspecified | restricted
+-- Derived at ingest from the text (app/ingest/extract.py): skills named in the role sections, and the years of
+-- experience required (NULL = not stated). embedding_version bumps when the embedded text or model changes,
+-- so the next ingest re-embeds jobs whose content didn't change.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS skills TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS min_years SMALLINT;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS embedding_version SMALLINT NOT NULL DEFAULT 1;
 CREATE INDEX IF NOT EXISTS jobs_fresh_idx  ON jobs (is_active, effective_posted_at DESC);
 CREATE INDEX IF NOT EXISTS jobs_cities_idx ON jobs USING gin (cities);
 
@@ -73,6 +79,10 @@ CREATE TABLE IF NOT EXISTS feedback (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (user_id, job_id)
 );
+
+-- Why a job was dismissed, and where a saved job's application stands (the Saved tab's tracker).
+ALTER TABLE feedback ADD COLUMN IF NOT EXISTS reason TEXT;
+ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status TEXT;
 
 -- Short-term memory: the visible chat transcript (user + assistant text only).
 CREATE TABLE IF NOT EXISTS messages (

@@ -19,7 +19,8 @@ from psycopg.types.json import Jsonb
 
 from app.config import get_settings
 from app.db import connection
-from app.embeddings import embed_passages, job_passage
+from app.embeddings import EMBED_VERSION, embed_passages, job_passage
+from app.ingest.extract import job_skills, min_years
 from app.ingest.sources import fetch_board, make_client
 from app.ingest.text import content_hash
 from app.models import Job
@@ -75,10 +76,10 @@ def drop_reason(job: Job, *, all_locations: bool, cutoff: datetime) -> str | Non
 UPSERT = """
 INSERT INTO jobs (id, source, board, company, title, location, is_remote, is_india, employment_type,
                   department, url, description, content_hash, posted_at, effective_posted_at, posted_at_source,
-                  cities, remote_scope)
+                  cities, remote_scope, skills, min_years)
 VALUES (%(id)s, %(source)s, %(board)s, %(company)s, %(title)s, %(location)s, %(is_remote)s, %(is_india)s,
         %(employment_type)s, %(department)s, %(url)s, %(description)s, %(hash)s, %(posted_at)s,
-        %(effective_posted_at)s, %(posted_at_source)s, %(cities)s, %(remote_scope)s)
+        %(effective_posted_at)s, %(posted_at_source)s, %(cities)s, %(remote_scope)s, %(skills)s, %(min_years)s)
 ON CONFLICT (id) DO UPDATE SET
     company = EXCLUDED.company, title = EXCLUDED.title, location = EXCLUDED.location,
     is_remote = EXCLUDED.is_remote, is_india = EXCLUDED.is_india,
@@ -87,12 +88,18 @@ ON CONFLICT (id) DO UPDATE SET
     effective_posted_at = COALESCE(EXCLUDED.posted_at, jobs.effective_posted_at),
     posted_at_source = CASE WHEN EXCLUDED.posted_at IS NOT NULL THEN 'ats' ELSE jobs.posted_at_source END,
     cities = EXCLUDED.cities, remote_scope = EXCLUDED.remote_scope,
+    skills = EXCLUDED.skills, min_years = EXCLUDED.min_years,
     -- only a changed posting loses its embedding and gets re-embedded
     embedding = CASE WHEN jobs.content_hash = EXCLUDED.content_hash THEN jobs.embedding END,
     content_hash = EXCLUDED.content_hash,
     last_seen_at = now(),
     is_active = TRUE
 """
+
+
+def derived(title: str, description: str) -> dict:
+    """Fields computed from a posting's text at ingest (see app/ingest/extract.py)."""
+    return {"skills": job_skills(title, description), "min_years": min_years(description)}
 
 
 def board_known(conn, source: str, board: str) -> bool:
@@ -129,7 +136,8 @@ def sync_board(conn, source: str, board: str, jobs: list[Job], company: str | No
             effective, src = now, "first_seen"
         else:
             effective, src = None, "unknown"
-        rows.append({**j.model_dump(), "hash": h, "effective_posted_at": effective, "posted_at_source": src})
+        rows.append({**j.model_dump(), **derived(j.title, j.description), "hash": h,
+                     "effective_posted_at": effective, "posted_at_source": src})
     with conn.cursor() as cur:
         if rows:
             cur.executemany(UPSERT, rows)
@@ -191,12 +199,13 @@ def prune(conn, after_days: int) -> int:
 
 
 def embed_pending(conn, batch: int = 128) -> int:
+    """Embed active jobs that have no embedding, or one made with an older EMBED_VERSION."""
     total = 0
     while True:
         rows = conn.execute(
             """SELECT id, title, company, location, department, description FROM jobs
-               WHERE is_active AND embedding IS NULL LIMIT %s""",
-            (batch,),
+               WHERE is_active AND (embedding IS NULL OR embedding_version < %s) LIMIT %s""",
+            (EMBED_VERSION, batch),
         ).fetchall()
         if not rows:
             return total
@@ -205,12 +214,36 @@ def embed_pending(conn, batch: int = 128) -> int:
         )
         with conn.cursor() as cur:
             cur.executemany(
-                "UPDATE jobs SET embedding = %s WHERE id = %s",
-                [(v, r["id"]) for v, r in zip(vectors, rows)],
+                "UPDATE jobs SET embedding = %s, embedding_version = %s WHERE id = %s",
+                [(v, EMBED_VERSION, r["id"]) for v, r in zip(vectors, rows)],
             )
         conn.commit()
         total += len(rows)
         log.info("embedded %d jobs", total)
+
+
+def reprocess(conn, *, embed: bool = True, batch: int = 500) -> dict:
+    """Recompute derived fields for every stored job and re-embed outdated ones, without fetching boards.
+
+    Ingest keeps these current for jobs still on their boards; this covers the rest (saved jobs that went
+    inactive, the eval snapshot) after extract.py or EMBED_VERSION changes.
+    """
+    updated, last = 0, ""
+    while True:
+        rows = conn.execute(
+            "SELECT id, title, description FROM jobs WHERE id > %s ORDER BY id LIMIT %s", (last, batch)
+        ).fetchall()
+        if not rows:
+            break
+        with conn.cursor() as cur:
+            cur.executemany(
+                "UPDATE jobs SET skills = %(skills)s, min_years = %(min_years)s WHERE id = %(id)s",
+                [{"id": r["id"], **derived(r["title"], r["description"])} for r in rows],
+            )
+        conn.commit()
+        updated += len(rows)
+        last = rows[-1]["id"]
+    return {"derived": updated, "embedded": embed_pending(conn) if embed else 0}
 
 
 def store_results(
@@ -308,8 +341,15 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Ingest jobs from public ATS boards")
     p.add_argument("--all-locations", action="store_true", help="keep jobs outside India / non-remote too")
     p.add_argument("--no-embed", action="store_true", help="skip the embedding step")
+    p.add_argument("--reprocess", action="store_true",
+                   help="don't fetch: recompute derived fields and re-embed outdated jobs already stored")
+    p.add_argument("--db-url", help="database to use (default: DATABASE_URL)")
     args = p.parse_args()
-    stats = run_ingest(all_locations=args.all_locations, embed=not args.no_embed)
+    if args.reprocess:
+        with connection(args.db_url) as conn:
+            print(json.dumps(reprocess(conn, embed=not args.no_embed), indent=2))
+        return
+    stats = run_ingest(all_locations=args.all_locations, embed=not args.no_embed, db_url=args.db_url)
     print(json.dumps(asdict(stats), indent=2))
 
 

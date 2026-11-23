@@ -3,8 +3,11 @@ const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const state = {
   user: null, profile: null, prefs: null, saved: new Set(), method: "hybrid", tab: "feed", jobs: new Map(),
-  posted: "14", sort: "relevance", cities: new Set(),
+  posted: "14", sort: "relevance", cities: new Set(), india: true, remote: false, undated: false,
+  shown: { feed: [], results: [] }, stale: new Set(), savedJobs: [], savedFilter: "all",
 };
+const PAGE = 20;
+const advanced = () => $("#advanced").open;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ---------------------------------------------------------------- storage + api
@@ -187,16 +190,97 @@ function renderProfile() {
     <p class="muted small">${esc(p.headline)}</p>
     <div class="profile-section"><h3>Target roles</h3>${chips(p.target_roles, "accent")}</div>
     <div class="profile-section"><h3>Skills</h3>${chips(p.skills.slice(0, 18), "", p.target_roles.length)}</div>
-    <div class="profile-section"><button class="btn ghost small" id="replace-resume">${icon("upload")} Replace resume</button></div>`;
+    <div class="profile-section profile-actions">
+      <button class="btn ghost small" id="edit-profile">${icon("file")} Edit</button>
+      <button class="btn ghost small" id="replace-resume">${icon("upload")} Replace resume</button>
+    </div>`;
   $("#replace-resume").onclick = () => { $("#onboarding").hidden = false; $("#onboarding").scrollIntoView({ behavior: "smooth" }); };
+  $("#edit-profile").onclick = renderProfileEditor;
   renderPrefs();
+}
+
+// The resume reader can get the level or skills wrong, and every ranking depends on them: let people fix it.
+const LEVELS = [["intern", "Student / intern"], ["entry", "Entry (0-2 yrs)"], ["mid", "Mid"], ["senior", "Senior"], ["lead", "Lead / staff"]];
+const splitList = (s) => s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+
+function renderProfileEditor() {
+  const p = state.profile;
+  $("#profile-view").innerHTML = `
+    <form class="profile-edit" id="profile-form">
+      <h2>Edit profile</h2>
+      <p class="muted small">Your feed is ranked on these. Separate items with commas.</p>
+      <label>Headline<input name="headline" maxlength="160" value="${esc(p.headline)}"></label>
+      <div class="row">
+        <label>Level<select name="seniority">${LEVELS.map(([v, l]) => `<option value="${v}"${v === p.seniority ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label>Years of experience<input name="years" type="number" min="0" max="50" step="0.5" value="${esc(p.years_experience)}"></label>
+      </div>
+      <label>Target roles<input name="roles" value="${esc(p.target_roles.join(", "))}" placeholder="Backend Engineer, Android Developer"></label>
+      <label>Skills, most important first<textarea name="skills" rows="4" placeholder="Python, PostgreSQL, Docker">${esc(p.skills.join(", "))}</textarea></label>
+      <div class="profile-actions">
+        <button class="btn primary small" type="submit">Save</button>
+        <button class="btn ghost small" type="button" id="cancel-edit">Cancel</button>
+      </div>
+    </form>`;
+  $("#cancel-edit").onclick = renderProfile;
+  $("#profile-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target, btn = $("button[type=submit]", f);
+    const edited = {
+      ...p, headline: f.headline.value.trim(), seniority: f.seniority.value,
+      years_experience: Math.max(0, Number(f.years.value) || 0),
+      target_roles: splitList(f.roles.value), skills: splitList(f.skills.value),
+    };
+    btn.disabled = true;
+    try {
+      const d = await api("/api/profile", { method: "PUT", json: edited });
+      state.profile = d.profile; state.prefs = d.preferences;
+      renderProfile();
+      loadFeed();
+      toast("Profile updated. Re-ranking your feed");
+    } catch (err) {
+      toast(err.message, { error: true });
+      btn.disabled = false;
+    }
+  });
+  $("#profile-form input[name=headline]").focus();
+}
+
+// The filter bar's India switch and posting window are the remembered preferences, shown in one place.
+function syncFilterBar() {
+  const p = state.prefs || {};
+  state.india = p.india_only ?? state.india;
+  state.posted = String(p.posted_within_days || state.posted);
+  $("#f-india").checked = state.india;
+  $$("#posted .seg").forEach((x) => { const on = x.dataset.value === state.posted; x.classList.toggle("active", on); x.setAttribute("aria-checked", on); });
+  syncIndicators();
+}
+
+function filterParams(params = new URLSearchParams()) {
+  params.set("posted_within_days", state.posted);
+  if (state.india) params.set("india_only", true);
+  if (state.remote) params.set("remote_only", true);
+  if (state.undated) params.set("include_undated", true);
+  for (const c of state.cities) params.append("cities", c);
+  return params;
+}
+
+// Filters are shared: reload the visible list now (debounced, so clicking three cities costs one rerank)
+// and the other one when it is next opened.
+let filterTimer;
+function onFiltersChanged() {
+  state.stale = new Set(["feed", "search"]);
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(reloadVisible, 450);
+}
+function reloadVisible() {
+  if (state.tab === "feed") { state.stale.delete("feed"); loadFeed(); }
+  else if (state.tab === "search" && $("#q").value.trim()) { state.stale.delete("search"); runSearch(); }
 }
 
 function renderPrefs() {
   const p = state.prefs || {};
-  $("#pref-india").checked = !!p.india_only;
   $("#pref-remote").checked = p.remote_ok !== false;
-  $("#pref-window").value = String(p.posted_within_days || 14);
+  syncFilterBar();
   const items = [
     p.locations?.length && `Prefers ${p.locations.join(", ")}`,
     p.roles?.length && `Roles: ${p.roles.join(", ")}`,
@@ -213,14 +297,14 @@ function renderPrefs() {
 
 async function savePrefs() {
   const prefs = {
-    ...(state.prefs || {}), india_only: $("#pref-india").checked, remote_ok: $("#pref-remote").checked,
-    posted_within_days: Number($("#pref-window").value),
+    ...(state.prefs || {}), india_only: state.india, remote_ok: $("#pref-remote").checked,
+    posted_within_days: Number(state.posted),
   };
   try {
     state.prefs = (await api("/api/preferences", { method: "PUT", json: prefs })).preferences;
     renderPrefs();
-    loadFeed();
   } catch (e) { toast(e.message, { error: true }); }
+  onFiltersChanged();
 }
 
 async function uploadResume(form) {
@@ -249,8 +333,27 @@ function postedTag(j) {
     const label = when.week ? `${when.week} · ${when.text}` : when.text;
     return `<span class="tag ${when.fresh ? "fresh" : ""}">${icon("clock")}${label}</span>`;
   }
-  return j.posted_at_source === "unknown" ? `<span class="tag undated">${icon("clock")}date unknown</span>` : "";
+  return j.posted_at_source === "unknown" ? `<span class="tag undated">${icon("clock")}no posted date</span>` : "";
 }
+
+// "Matches 4 of 6 skills · Needs 3+ yrs", plus the skills the posting asks for that the profile lacks.
+function fitLine(j) {
+  const p = state.profile, parts = [];
+  if (p && j.skills?.length && j.matched_skills && !j.status) {  // saved cards carry no match data
+    const have = j.matched_skills.length, total = j.skills.length;
+    parts.push(`<span class="fit-skills ${have ? "good" : ""}" title="${esc(j.matched_skills.join(", "))}">${icon(have ? "check" : "minus")}Matches ${have} of ${total} skill${total > 1 ? "s" : ""}</span>`);
+    const lacking = j.skills.filter((s) => !j.matched_skills.includes(s)).slice(0, 3);
+    if (lacking.length && have) parts.push(`<span class="muted">Missing ${esc(lacking.join(", "))}</span>`);
+  }
+  if (j.min_years) {
+    const stretch = p && j.min_years > (p.years_experience || 0) + 1;
+    parts.push(`<span class="${stretch ? "fit-warn" : ""}" title="From the posting's requirements">Needs ${j.min_years}+ yrs</span>`);
+  }
+  return parts.join(`<span class="sep">·</span>`);
+}
+
+const STATUSES = [["saved", "To apply"], ["applied", "Applied"], ["interviewing", "Interviewing"], ["offer", "Offer"], ["rejected", "Rejected"]];
+const DISMISS_REASONS = [["senior", "Too senior"], ["location", "Wrong location"], ["field", "Not my field"], ["company", "Not this company"]];
 
 function jobCard(j, i, { showRanks = false } = {}) {
   state.jobs.set(j.id, j);
@@ -281,7 +384,25 @@ function jobCard(j, i, { showRanks = false } = {}) {
       $(".ring-fg", ring).style.strokeDashoffset = 97.4 * (1 - score / 10);
     }));
   }
-  if (showRanks) {
+  const fit = fitLine(j);
+  if (fit) { const f = $(".fit", node); f.hidden = false; f.innerHTML = fit; }
+  if (j.status) {
+    const sel = $(".status", node);
+    sel.hidden = false;
+    sel.innerHTML = STATUSES.map(([v, l]) => `<option value="${v}"${v === j.status ? " selected" : ""}>${l}</option>`).join("");
+    sel.dataset.status = j.status;
+    sel.addEventListener("click", (e) => e.stopPropagation());
+    sel.addEventListener("keydown", (e) => e.stopPropagation());
+    sel.addEventListener("change", async () => {
+      try {
+        await api(`/api/saved/${encodeURIComponent(j.id)}`, { method: "PUT", json: { status: sel.value } });
+        j.status = sel.dataset.status = sel.value;
+        renderTracker();
+        toast(`Marked as ${STATUSES.find(([v]) => v === sel.value)[1].toLowerCase()}`);
+      } catch (err) { sel.value = j.status; toast(err.message, { error: true }); }
+    });
+  }
+  if (showRanks) {  // visible only with Advanced open (body.show-ranks)
     const r = $(".ranks", node);
     r.hidden = false;
     const bar = (label, rank) => `<span class="rank">${label} <i style="--w:${rank ? Math.max(6, 100 - (rank - 1) * 2) : 0}%"></i> ${rank ? "#" + rank : "–"}</span>`;
@@ -313,11 +434,7 @@ function jobCard(j, i, { showRanks = false } = {}) {
       await api("/api/feedback", { method: "POST", json: { job_id: j.id, action: "dismiss" } });
       state.saved.delete(j.id);
       updateSavedCount();
-      removeCard(node);
-      toast("Hidden. It won't be recommended again.", {
-        action: "Undo",
-        onAction: async () => { await api("/api/feedback", { method: "POST", json: { job_id: j.id, action: "clear" } }); refreshActive(); },
-      });
+      askWhy(node, j);
     } catch (err) { toast(err.message, { error: true }); }
   });
   node.addEventListener("click", () => openDrawer(j.id));
@@ -328,6 +445,31 @@ function jobCard(j, i, { showRanks = false } = {}) {
     node.style.setProperty("--my", `${e.clientY - r.top}px`);
   });
   return node;
+}
+
+// The card turns into a one-line "why?" prompt; the answer is stored, and "Not this company" is remembered.
+function askWhy(node, j) {
+  const row = document.createElement("div");
+  row.className = "job dismissed-why";
+  row.innerHTML = `<span class="muted small">Hidden <b>${esc(j.title)}</b>. Why?</span>
+    <div class="why-btns">${DISMISS_REASONS.map(([v, l]) => `<button type="button" class="chip-btn" data-reason="${v}">${l}</button>`).join("")}
+    <button type="button" class="btn ghost small" data-undo>Undo</button></div>`;
+  node.replaceWith(row);
+  const done = setTimeout(() => removeCard(row), 9000);
+  $$("[data-reason]", row).forEach((b) => b.addEventListener("click", async () => {
+    clearTimeout(done);
+    removeCard(row);
+    try {
+      const d = await api("/api/feedback", { method: "POST", json: { job_id: j.id, action: "dismiss", reason: b.dataset.reason } });
+      if (d.preferences) { state.prefs = d.preferences; renderPrefs(); toast(`You won't see ${j.company} again`); }
+      else toast("Thanks, noted");
+    } catch (err) { toast(err.message, { error: true }); }
+  }));
+  $("[data-undo]", row).addEventListener("click", async () => {
+    clearTimeout(done);
+    await api("/api/feedback", { method: "POST", json: { job_id: j.id, action: "clear" } });
+    row.replaceWith(jobCard(j, 0, { showRanks: state.tab === "search" && state.method !== "hybrid_rerank" }));
+  });
 }
 
 function removeCard(node) {
@@ -346,6 +488,26 @@ function renderList(el, jobs, opts) {
     return;
   }
   jobs.forEach((j, i) => el.append(jobCard(j, i, opts)));
+}
+
+// Show a list and remember it, so "Load more" can ask for the next page and append only new jobs.
+function showJobs(kind, jobs, opts) {
+  state.shown[kind] = jobs;
+  renderList($(`#${kind}`), jobs, opts);
+  $(`#${kind}-more`).hidden = jobs.length < PAGE;
+}
+
+async function loadMore(kind, url, opts) {
+  const btn = $(`#${kind}-more`), have = state.shown[kind];
+  btn.disabled = true;
+  try {
+    const { jobs } = await api(url(have.length + PAGE));
+    const seen = new Set(have.map((j) => j.id)), fresh = jobs.filter((j) => !seen.has(j.id));
+    fresh.forEach((j, i) => $(`#${kind}`).append(jobCard(j, i, opts)));
+    state.shown[kind] = [...have, ...fresh];
+    btn.hidden = !fresh.length || jobs.length < have.length + PAGE;
+  } catch (e) { toast(e.message, { error: true }); }
+  btn.disabled = false;
 }
 
 function skeletons(el, n = 5) {
@@ -375,56 +537,91 @@ async function loadFeed() {
     el.innerHTML = emptyState("sparkle", "Your feed appears here", "Upload a resume above and the agent will rank live jobs for you.");
     return;
   }
+  state.stale.delete("feed");
   const run = ++feedRun;  // ignore stale responses if the feed is reloaded mid-flight
   const status = $("#feed-status");
+  $("#feed-more").hidden = true;
   skeletons(el);
-  // Phase 1: instant hybrid ranking (no AI call). Phase 2: AI rerank with reasons, swapped in when ready.
+  // Phase 1: instant ranking (no AI call). Phase 2: AI picks with reasons, swapped in when ready.
   try {
-    const fast = await api("/api/recommendations?limit=20&rerank=false");
+    const fast = await api(`/api/recommendations?${feedParams(PAGE, false)}`);
     if (run !== feedRun) return;
-    renderList(el, fast.jobs);
+    showJobs("feed", fast.jobs);
+    if (!fast.jobs.length) { status.textContent = "No jobs match these filters"; return; }
   } catch (e) { el.innerHTML = `<div class="empty error">${esc(e.message)}</div>`; return; }
-  status.innerHTML = `<span class="spinner"></span> AI is reranking…`;
+  status.innerHTML = `<span class="spinner"></span> AI is picking your best fits…`;
   try {
-    const smart = await api("/api/recommendations?limit=20&rerank=true");
+    const smart = await api(`/api/recommendations?${feedParams(PAGE, true)}`);
     if (run !== feedRun) return;
-    renderList(el, smart.jobs);
-    status.textContent = "Ranked against your profile · AI-reranked";
+    showJobs("feed", smart.jobs);
+    status.textContent = "Ranked against your profile · checked by AI";
   } catch (e) {
     if (run !== feedRun) return;
-    status.textContent = "Ranked against your profile · AI rerank unavailable";
+    status.textContent = "Ranked against your profile · AI check unavailable right now";
     toast(e.message, { error: true });
   }
 }
+const feedParams = (limit, rerank) => filterParams(new URLSearchParams({ limit, rerank }));
+// Later pages skip the AI pass: it only grades the top of the list, and each pass costs daily AI calls.
+const moreFeed = () => loadMore("feed", (n) => `/api/recommendations?${feedParams(n, false)}`);
 let feedRun = 0;
 
 async function runSearch(ev) {
   ev?.preventDefault();
   const q = $("#q").value.trim();
   if (!q) return;
-  const params = new URLSearchParams({
-    q, method: state.method, india_only: $("#s-india").checked, remote_only: $("#s-remote").checked, limit: 20,
-    posted_within_days: state.posted, sort: state.sort, include_undated: $("#s-undated").checked,
-  });
-  for (const c of state.cities) params.append("cities", c);
+  state.stale.delete("search");
   const el = $("#results");
+  $("#results-more").hidden = true;
   skeletons(el);
   try {
-    renderList(el, (await api(`/api/search?${params}`)).jobs, { showRanks: state.method !== "hybrid_rerank" });
+    const d = await api(`/api/search?${searchParams(PAGE, state.method)}`);
+    showJobs("results", d.jobs, { showRanks: state.method !== "hybrid_rerank" });
+    showUnderstood(d.understood);
   } catch (e) { el.innerHTML = `<div class="empty error">${esc(e.message)}</div>`; }
+}
+const searchParams = (limit, method) =>
+  filterParams(new URLSearchParams({ q: $("#q").value.trim(), method, sort: state.sort, limit }));
+const moreResults = () => loadMore("results", (n) => `/api/search?${searchParams(n, state.method === "hybrid_rerank" ? "hybrid" : state.method)}`,
+  { showRanks: state.method !== "hybrid_rerank" });
+
+// "remote backend in pune" -> tell the person which filters were read from their words.
+function showUnderstood(u) {
+  const el = $("#understood");
+  el.hidden = !u;
+  if (!u) return;
+  const bits = [u.query ? `“${esc(u.query)}”` : "jobs matching your profile", ...u.cities.map(esc), u.remote && "remote only", u.india && "India only"];
+  el.innerHTML = `${icon("sparkle")} Showing ${bits.filter(Boolean).join(" · ")}`;
 }
 
 async function loadSaved(render = true) {
   try {
     const { jobs } = await api("/api/saved");
     state.saved = new Set(jobs.map((j) => j.id));
+    state.savedJobs = jobs;
     updateSavedCount();
-    if (render) {
-      const el = $("#saved");
-      if (!jobs.length) el.innerHTML = emptyState("bookmark", "Nothing saved yet", "Tap the bookmark on any job to keep it here.");
-      else renderList(el, jobs);
-    }
+    if (render) renderSaved();
   } catch { /* user not ready */ }
+}
+
+// Saved tab doubles as an application tracker: filter by status, change it on each card.
+function renderSaved() {
+  const el = $("#saved"), jobs = state.savedJobs;
+  renderTracker();
+  if (!jobs.length) { el.innerHTML = emptyState("bookmark", "Nothing saved yet", "Tap the bookmark on any job to keep it here."); return; }
+  const shown = state.savedFilter === "all" ? jobs : jobs.filter((j) => j.status === state.savedFilter);
+  if (!shown.length) { el.innerHTML = emptyState("bookmark", "None here yet", "Change a saved job's status to move it here."); return; }
+  renderList(el, shown);
+}
+
+function renderTracker() {
+  const t = $("#tracker"), jobs = state.savedJobs;
+  t.hidden = !jobs.length;
+  const count = (s) => jobs.filter((j) => j.status === s).length;
+  t.innerHTML = [["all", "All", jobs.length], ...STATUSES.map(([v, l]) => [v, l, count(v)])]
+    .map(([v, l, n]) => `<button type="button" class="city-chip${state.savedFilter === v ? " on" : ""}" data-status="${v}"
+      aria-pressed="${state.savedFilter === v}" ${n || v === "all" || state.savedFilter === v ? "" : "disabled"}>${l} <span class="n">${n}</span></button>`).join("");
+  $$("[data-status]", t).forEach((b) => b.addEventListener("click", () => { state.savedFilter = b.dataset.status; renderSaved(); }));
 }
 
 function refreshActive() {
@@ -445,7 +642,9 @@ function switchTab(name) {
     if (show && p.hidden) { p.hidden = false; p.style.animation = "none"; void p.offsetWidth; p.style.animation = ""; }
     else if (!show) p.hidden = true;
   });
+  $("#filters").hidden = name === "saved";
   syncIndicators();
+  if (state.stale.has(name)) reloadVisible();
   if (name === "saved") loadSaved();
   if (name === "search") setTimeout(() => $("#q").focus(), 50);
 }
@@ -626,7 +825,7 @@ function renderCityChips(featured, counts) {
     if (state.cities.has(c)) state.cities.delete(c); else state.cities.add(c);
     b.classList.toggle("on", state.cities.has(c));
     b.setAttribute("aria-pressed", state.cities.has(c));
-    if ($("#q").value.trim()) runSearch();
+    onFiltersChanged();
   }));
 }
 
@@ -669,12 +868,15 @@ $("#resume-text-btn").addEventListener("click", () => {
   uploadResume(form);
 });
 $("#open-upload").addEventListener("click", () => { $("#onboarding").scrollIntoView({ behavior: "smooth" }); $("#resume-file").click(); });
-$("#pref-india").addEventListener("change", savePrefs);
 $("#pref-remote").addEventListener("change", savePrefs);
-$("#pref-window").addEventListener("change", savePrefs);
-wireSegmented("#posted", (v) => { state.posted = v; if ($("#q").value.trim()) runSearch(); });
+wireSegmented("#posted", (v) => { state.posted = v; savePrefs(); });
 wireSegmented("#sort", (v) => { state.sort = v; if ($("#q").value.trim()) runSearch(); });
-$("#s-undated").addEventListener("change", () => { if ($("#q").value.trim()) runSearch(); });
+$("#f-india").addEventListener("change", (e) => { state.india = e.target.checked; savePrefs(); });
+$("#f-remote").addEventListener("change", (e) => { state.remote = e.target.checked; onFiltersChanged(); });
+$("#f-undated").addEventListener("change", (e) => { state.undated = e.target.checked; onFiltersChanged(); });
+$("#advanced").addEventListener("toggle", () => { document.body.classList.toggle("show-ranks", advanced()); syncIndicators(); });
+$("#feed-more").addEventListener("click", moreFeed);
+$("#results-more").addEventListener("click", moreResults);
 $("#refresh-feed").addEventListener("click", loadFeed);
 $("#search-form").addEventListener("submit", runSearch);
 $("#chat-form").addEventListener("submit", (e) => {
@@ -698,6 +900,7 @@ $("#close-chat").addEventListener("click", () => openChat(false));
   document.fonts?.ready.then(syncIndicators);
   try {
     await ensureUser();
+    syncFilterBar();
     renderProfile();
     await loadSaved(false);
     loadFeed();

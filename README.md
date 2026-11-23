@@ -28,7 +28,8 @@ Career Agent pulls thousands of real job postings twice a day from the public Gr
 SmartRecruiters and Recruitee job-board APIs, keeps only the **last 30 days** (shown: the last 14 by default), indexes
 them for keyword **and** semantic search, and matches them against a candidate's resume.
 
-- Upload a resume. An LLM turns it into a **validated, structured profile** (JSON-schema constrained output).
+- Upload a resume. An LLM reads the PDF itself (layout-aware, works on scanned resumes) and turns it into a
+  **validated, structured profile** (JSON-schema constrained output) that you can correct in the UI.
 - Get a **personalised feed** built from hybrid retrieval, preference boosts and an LLM reranker that explains each match.
 - Chat with an **agent** that calls tools to search, explain fit, save or hide jobs, draft application answers and
   **remember preferences** ("only Bengaluru from now on") across sessions.
@@ -95,7 +96,14 @@ flowchart LR
   in a row disable a board (`boards` table, listed in `/api/stats`). Inactive jobs unseen for 60 days are deleted,
   except ones a user saved or dismissed.
 - Requests are limited to 4 in flight per ATS host, with `Retry-After` backoff on 429/503.
+- **Structure from text** ([extract.py](app/ingest/extract.py)): postings are split into sections by their headings.
+  Role, responsibilities and requirements come first and company pitch, benefits and legal text are dropped: the median
+  posting is ~6,000 characters and often opens with "About <company>", while the embedder reads ~2,000 and the reranker
+  800. From the same sections: **years of experience required** ("5+ years of experience", found in ~2/3 of postings;
+  nice-to-have sections and "4-year degree" don't count) and **skill tags** from a fixed vocabulary, with context rules
+  for ambiguous words ("Go-to-Market" isn't Go, "the rest of the team" isn't REST).
 - Embeddings run **locally** (BGE-small via ONNX/fastembed): no per-call API cost and deterministic for evals.
+  `EMBED_VERSION` bumps when the embedded text changes, and the next ingest re-embeds every job made with an older one.
 
 ### 2. Retrieval and ranking ([app/search.py](app/search.py))
 | Stage | Implementation |
@@ -103,13 +111,17 @@ flowchart LR
 | Keyword | Postgres `tsvector` (title weighted A, company/team B, body C), **OR**-query + `ts_rank_cd` |
 | Semantic | pgvector cosine distance on an HNSW index, `ef_search` widened when filters are applied |
 | Early-career source | For intern/entry profiles, a third retriever: vector search limited to intern/new-grad/associate titles. Without it these roles (<1% of the index) get crowded out |
-| Fusion | Reciprocal Rank Fusion, `k = 60`, over all candidate lists |
-| Filters | City (array overlap on canonical names), India, remote, and a posting window (default 14 days) |
+| Fusion | Weighted Reciprocal Rank Fusion, `k = 60`: vector 1.0, keyword 0.3, early-career 0.5 (tuned on the eval labels) |
+| Query parsing | "remote backend jobs in pune" → query "backend" + Pune + remote ([app/query.py](app/query.py)). City names stay out of the keyword query, where they'd match every posting in that city |
+| Filters | City (array overlap on canonical names), India, remote, and a posting window (default 14 days). One filter bar drives both the feed and search |
 | Personalisation | Boosts for preferred cities/roles/remote; dismissed jobs and avoided companies filtered out |
 | Freshness | ×1.05 for postings under 3 days old; *Newest* sort orders by date instead (and skips the rerank) |
 | Dedupe | One card per company + title (city suffix ignored) + cities |
 | Seniority fit | Title level (intern → staff/manager) vs the profile's level; a student's feed isn't led by Staff roles |
-| Rerank | LLM grades the top 15 (0–10) with a one-line reason, via structured output; hallucinated ids are ignored |
+| Experience fit | Years the posting requires vs the profile's years (1 year of slack): ×0.85 at +2, ×0.65 at +4, ×0.45 beyond. Combined with seniority fit, floored at ×0.2 |
+| Skill overlap | Up to ×1.2 when the posting's skill tags match the profile's (or the query's) skills. Only a boost: tags come from a fixed vocabulary |
+| Learns from feedback | The feed's profile vector moves toward the mean of your last 30 saved jobs (0.5) and away from dismissed ones (0.15), Rocchio-style |
+| Rerank | LLM grades the top 24 (0–10) with a one-line reason, via structured output, in two parallel batches of 12 interleaved by rank so the grades stay comparable. It reads the role and requirement sections and the years required. Ties keep retrieval order; hallucinated ids are ignored |
 
 Why an OR-query: `websearch_to_tsquery` ANDs every term, so a profile-length query matches almost nothing.
 OR keeps recall high, and `ts_rank_cd` still rewards postings that match more terms.
@@ -148,23 +160,26 @@ Runs on the Gemini **free tier** (`gemini-3.1-flash-lite`). 429/503 responses ar
 
 ## Results
 
-Retrieval on a frozen snapshot of **2,783 live jobs**, 20 queries, 736 pooled judgements graded by
+Retrieval on a frozen snapshot of **2,783 live jobs**, 20 queries, 957 pooled judgements graded by
 `gemini-3.5-flash-lite` (the app itself uses `gemini-3.1-flash-lite`, so the reranker isn't grading itself).
 Raw output: [evals/results/retrieval.json](evals/results/retrieval.json), labels: [evals/data/qrels.json](evals/data/qrels.json).
 
 | Method | nDCG@10 | Recall@20 | MRR | p50 ms | p95 ms |
 |---|---|---|---|---|---|
-| keyword (Postgres FTS) | 0.458 | 0.590 | 0.564 | 27 | 1184 |
-| vector (pgvector) | 0.697 | 0.740 | 0.805 | 33 | 86 |
-| hybrid (RRF) | 0.622 | 0.734 | 0.725 | 46 | 95 |
-| **hybrid + LLM rerank** | **0.795** | 0.734 | **0.882** | 4701 | 7757 |
+| keyword (Postgres FTS) | 0.436 | 0.550 | 0.595 | 29 | 98 |
+| vector (pgvector) | 0.666 | 0.715 | 0.754 | 29 | 35 |
+| **hybrid (weighted RRF)** | **0.678** | **0.763** | **0.762** | 49 | 114 |
+| hybrid + LLM rerank | not re-measured yet (Gemini returned 503s); was 0.795 on the first 736 labels | | | ~4700 | ~7800 |
 
 **What this says:**
-- The LLM reranker is the biggest win: **+0.17 nDCG@10 over hybrid and +0.10 over vector-only**, at about 4.7 s per request.
-- **Hybrid RRF is *worse* than vector-only here.** Equal-weight RRF lets the much weaker keyword list pull noise into
-  the top 10. Next step: a weighted RRF (or keyword only as a recall booster) tuned on these labels.
-- Recall@20 is the same for hybrid and hybrid + rerank by construction: the reranker reorders the top 15, it doesn't fetch new jobs.
+- **Weighted RRF fixed hybrid.** With equal weights hybrid scored 0.640 on these labels, below vector-only; with
+  keyword at 0.3 and early-career at 0.5 it is now the best retrieval method on nDCG@10 and Recall@20.
+- Embedding the role and requirement sections instead of the whole posting (EMBED_VERSION 2) raised hybrid Recall@20
+  from 0.723 to 0.763; nDCG@10 is flat (0.675 → 0.678) and MRR slightly lower (0.792 → 0.762).
+- The labels were extended twice (`label --extend`) as new rankings surfaced unjudged jobs, so these numbers
+  aren't comparable with the first table's 736-label run.
 - Caveats: LLM-judged pooled labels, no human spot-check yet (`human_checked: 0`), 20 queries.
+  Re-run `python -m evals.run_retrieval` for the rerank row.
 
 Agent tool-selection eval ([evals/agent_cases.json](evals/agent_cases.json), 15 cases): not run yet. Run
 `python -m evals.run_agent` and add the result here.
@@ -190,7 +205,7 @@ docker compose up api             # http://localhost:8000
 ```bash
 docker compose run --rm api python -m pytest -q
 ```
-27 tests: normalisers, ranking maths, metrics and the agent loop run without a DB; integration tests use a real
+66 tests: normalisers, text extraction, ranking maths, metrics and the agent loop run without a DB; integration tests use a real
 Postgres + pgvector (`career_agent_test`) and the real embedding model.
 
 > **Windows note:** if Smart App Control blocks psycopg's bundled `libpq` DLL, run everything through Docker as above.
@@ -231,11 +246,13 @@ Interactive docs at `/docs`. Send `X-User-Id` (from `POST /api/users`) on user-s
 |---|---|---|
 | `POST` | `/api/users` | Create an anonymous user |
 | `POST` | `/api/profile` | Upload resume (PDF `file` or `text`) → structured profile |
-| `GET` | `/api/recommendations` | Personalised feed (`rerank=true` by default) |
-| `GET` | `/api/search` | `q`, `method=keyword\|vector\|hybrid\|hybrid_rerank`, `india_only`, `remote_only`, `location` |
-| `POST` | `/api/feedback` | `{job_id, action: save\|dismiss\|clear}` |
-| `GET` | `/api/saved` | Saved jobs |
+| `GET` | `/api/recommendations` | Personalised feed (`rerank=true` by default); same filters as search (`cities`, `india_only`, `remote_only`, `posted_within_days`) |
+| `GET` | `/api/search` | `q`, `method=keyword\|vector\|hybrid\|hybrid_rerank`, `india_only`, `remote_only`, `cities`, `sort`. Cities and "remote" written in `q` become filters; the response's `understood` says what was read (`parse=false` turns this off) |
+| `POST` | `/api/feedback` | `{job_id, action: save\|dismiss\|clear, reason?}`; dismiss reason `company` adds the company to `avoid_companies` |
+| `GET` | `/api/saved` | Saved jobs, each with its application `status` |
+| `PUT` | `/api/saved/{job_id}` | `{status: saved\|applied\|interviewing\|offer\|rejected}` (the Saved tab's tracker) |
 | `POST` | `/api/chat` | Agent turn → `{reply, trace, jobs, preferences}` |
+| `PUT` | `/api/profile` | Save a corrected profile (skills, roles, level); re-embeds it, no LLM call |
 | `PUT` | `/api/preferences` | Edit long-term memory directly |
 | `GET` | `/api/stats` | Index size and last ingest run |
 | `POST` | `/admin/ingest` | Trigger ingestion (`Authorization: Bearer $ADMIN_TOKEN`) |

@@ -78,13 +78,18 @@ def set_preferences(conn, user_id: str, prefs: Preferences) -> Preferences:
     return prefs
 
 
-def record_feedback(conn, user_id: str, job_id: str, action: str) -> bool:
+def record_feedback(conn, user_id: str, job_id: str, action: str, *, reason: str | None = None) -> bool:
     if conn.execute("SELECT 1 FROM jobs WHERE id = %s", [job_id]).fetchone() is None:
         return False
+    # Re-saving keeps the application status; switching between save and dismiss resets it.
     conn.execute(
-        """INSERT INTO feedback (user_id, job_id, action) VALUES (%s, %s, %s)
-           ON CONFLICT (user_id, job_id) DO UPDATE SET action = EXCLUDED.action, created_at = now()""",
-        [user_id, job_id, action],
+        """INSERT INTO feedback (user_id, job_id, action, reason) VALUES (%s, %s, %s, %s)
+           ON CONFLICT (user_id, job_id) DO UPDATE SET
+               reason = EXCLUDED.reason,
+               status = CASE WHEN feedback.action = EXCLUDED.action THEN feedback.status END,
+               created_at = CASE WHEN feedback.action = EXCLUDED.action THEN feedback.created_at ELSE now() END,
+               action = EXCLUDED.action""",
+        [user_id, job_id, action, reason],
     )
     conn.commit()
     return True
@@ -101,6 +106,22 @@ def feedback_ids(conn, user_id: str, action: str) -> list[str]:
         [user_id, action],
     ).fetchall()
     return [r["job_id"] for r in rows]
+
+
+def set_status(conn, user_id: str, job_id: str, status: str) -> bool:
+    cur = conn.execute(
+        "UPDATE feedback SET status = %s WHERE user_id = %s AND job_id = %s AND action = 'save'",
+        [status, user_id, job_id],
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def saved_status(conn, user_id: str) -> dict[str, str | None]:
+    rows = conn.execute(
+        "SELECT job_id, status FROM feedback WHERE user_id = %s AND action = 'save'", [user_id]
+    ).fetchall()
+    return {r["job_id"]: r["status"] for r in rows}
 
 
 def saved_jobs(conn, user_id: str) -> list[Job]:

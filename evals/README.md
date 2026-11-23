@@ -20,10 +20,16 @@ python -m evals.snapshot load            # rebuild career_agent_eval from the fi
 
 # pooled relevance labels: union of top-20 from every method, graded 0-3 by an LLM judge
 python -m evals.label                    # -> evals/data/qrels.json   (needs GEMINI_API_KEY)
+python -m evals.label --extend           # after a ranking change: grade only newly retrieved jobs, keep the rest
 
 # metrics per method
 python -m evals.run_retrieval            # -> evals/results/retrieval.json + Markdown table
 ```
+
+**After changing ranking or embeddings,** run `label --extend` before comparing. Otherwise the new method's
+never-judged results count as irrelevant and a real improvement can look like a loss. The labeller saves after
+every query, so a free-tier 503 loses nothing; rerun `--extend` to resume. If the embedded text or model changed,
+re-embed the eval DB first: `python -m app.ingest.pipeline --reprocess --db-url <eval db url>`.
 
 **Metrics:** nDCG@10 (graded), Recall@20 and MRR (relevant = grade ≥ 2), plus p50/p95 latency.
 
