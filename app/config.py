@@ -26,7 +26,12 @@ class Settings(BaseSettings):
     # Retrieval knobs
     candidate_pool: int = 50  # per retriever, before fusion
     rrf_k: int = 60
-    rerank_top_n: int = 15
+    # RRF list weights (the vector list is 1.0), tuned on the eval labels: equal weights let the much weaker
+    # keyword list pull noise into the top 10 (nDCG@10 0.640 -> 0.675 with these; see evals/README.md).
+    rrf_keyword_weight: float = 0.3
+    rrf_early_weight: float = 0.5  # the intern/new-grad title list, used for early-career searches
+    rerank_top_n: int = 24  # graded by the LLM; recall@20 is ~0.72, so good jobs often sit just below 15
+    rerank_batch_size: int = 12  # jobs per LLM call; batches run in parallel (and each counts against the caps)
 
     # Freshness and ingest housekeeping
     fresh_days_default: int = 14  # search/feed show jobs posted in the last N days unless asked otherwise

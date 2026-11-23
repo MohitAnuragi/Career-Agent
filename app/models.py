@@ -25,6 +25,8 @@ class Job(BaseModel):
     posted_at_source: str = ""  # ats | first_seen | unknown (DB rows only)
     cities: list[str] = Field(default_factory=list)  # canonical names incl. regions, e.g. ["Gurugram", "Delhi NCR"]
     remote_scope: str = ""  # "" | india | global | unspecified | restricted
+    skills: list[str] = Field(default_factory=list)  # canonical skills the posting asks for (derived at ingest)
+    min_years: int | None = None  # years of experience required, None when the posting doesn't say
 
 
 Seniority = Literal["intern", "entry", "mid", "senior", "lead"]
@@ -87,6 +89,7 @@ class ScoredJob(BaseModel):
     keyword_rank: int | None = None
     vector_rank: int | None = None
     reason: str | None = None  # filled by the LLM reranker
+    matched_skills: list[str] = Field(default_factory=list)  # the job's skill tags the candidate (or query) has
 
 
 class RerankItem(BaseModel):

@@ -114,3 +114,93 @@ def test_metrics_known_values():
     assert mrr(["x", "c", "b"], qrels) == pytest.approx(1 / 3)
     assert ndcg_at_k(["a"], {}, 10) == 0.0
     assert percentile([1, 2, 3, 4], 50) == 2 and percentile([1, 2, 3, 4], 95) == 4
+
+
+def test_rrf_weights_scale_each_list():
+    scores = rrf([["a", "b"], ["b", "c"]], k=60, weights=[0.3, 1.0])
+    assert scores["a"] == pytest.approx(0.3 / 61)
+    assert scores["b"] == pytest.approx(0.3 / 62 + 1 / 61)
+    assert "a" not in rrf([["a"], ["b"]], weights=[0.0, 1.0])  # weight 0 drops the list
+
+
+def test_experience_fit_uses_required_years():
+    from app.models import CandidateProfile
+    from app.search import experience_fit
+
+    student = CandidateProfile(name="", headline="", seniority="intern", years_experience=0.5,
+                               skills=[], target_roles=[])
+    need = lambda n: job("x").model_copy(update={"min_years": n})  # noqa: E731
+    assert experience_fit(need(None), student) == 1.0
+    assert experience_fit(need(1), student) == 1.0  # a year of slack
+    assert experience_fit(need(2), student) == 0.85
+    assert experience_fit(need(3), student) == 0.65
+    assert experience_fit(need(8), student) == 0.45
+    assert experience_fit(need(8), None) == 1.0  # no profile, no level in the query
+    assert experience_fit(need(8), None, target_years=0) == 0.45  # "internships ..."
+
+
+def test_skill_fit_is_a_bounded_boost():
+    from app.search import skill_fit
+
+    tagged = job("x").model_copy(update={"skills": ["Python", "PostgreSQL", "Kafka", "Go"]})
+    boost, shared = skill_fit(tagged, {"Python", "PostgreSQL"})
+    assert shared == ["Python", "PostgreSQL"] and boost == pytest.approx(1.1)
+    assert skill_fit(tagged, {"Python", "PostgreSQL", "Kafka", "Go", "Rust"})[0] == pytest.approx(1.2)
+    assert skill_fit(tagged, set()) == (1.0, [])
+    assert skill_fit(job("y"), {"Python"}) == (1.0, [])  # untagged posting: neutral, not penalised
+
+
+def test_personal_vector_moves_toward_saved_and_away_from_dismissed():
+    import numpy as np
+
+    from app.search import personal_vector
+
+    p, liked, disliked = np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, 0, 1.0])
+    assert personal_vector(p) is p  # no feedback: unchanged
+    v = personal_vector(p, liked, disliked)
+    assert np.isclose(np.linalg.norm(v), 1.0)
+    assert v[0] > v[1] > 0 > v[2]  # profile still dominates
+
+
+def test_profile_query_is_roles_and_top_skills():
+    from app.models import CandidateProfile
+    from app.search import profile_query
+
+    p = CandidateProfile(name="", headline="", seniority="intern", years_experience=0,
+                         skills=[f"s{i}" for i in range(10)], target_roles=["Android Developer"])
+    assert profile_query(p, None) == "Android Developer s0 s1 s2 s3 s4 s5"
+    assert profile_query(p, Preferences(roles=["Backend Engineer"])).startswith("Backend Engineer s0")
+
+
+def test_rerank_batches_interleave_break_ties_by_rank_and_survive_one_failure(monkeypatch):
+    from app.config import get_settings
+    from app.llm.base import LLMError
+
+    monkeypatch.setattr(get_settings(), "rerank_batch_size", 3)
+    cands = [ScoredJob(job=job(str(i)), score=1.0) for i in range(6)]
+    seen_batches = []
+
+    def grade(prompt):
+        import re
+
+        ids = re.findall(r"^\[(\S+)\]", prompt, re.MULTILINE)
+        seen_batches.append(ids)
+        return RerankResult(items=[RerankItem(job_id=i, relevance=5, reason="same") for i in ids])
+
+    out = rerank(ScriptedLLM(handlers={RerankResult: grade}), "q", cands, None)
+    assert sorted(seen_batches) == [["0", "2", "4"], ["1", "3", "5"]]  # interleaved by rank
+    assert [o.job.id for o in out] == ["0", "1", "2", "3", "4", "5"]  # equal grades keep retrieval order
+
+    def flaky(prompt):
+        if "[0]" in prompt:
+            raise LLMError("503")
+        return grade(prompt)
+
+    out = rerank(ScriptedLLM(handlers={RerankResult: flaky}), "q", cands, None)
+    assert [o.job.id for o in out][:3] == ["1", "3", "5"] and out[3].reason is None  # failed batch: ungraded, last
+
+    def down(prompt):
+        raise LLMError("503")
+
+    with pytest.raises(LLMError):
+        rerank(ScriptedLLM(handlers={RerankResult: down}), "q", cands, None)

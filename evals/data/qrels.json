@@ -4,6 +4,7 @@
   "pool_depth": 20,
   "human_checked": 0,
   "human_agreement": null,
+  "extended": "2026-11-23",
   "qrels": {
     "q01": {
       "greenhouse:okta:8333118": 1,
@@ -43,7 +44,43 @@
       "greenhouse:gitlab:8716143002": 0,
       "greenhouse:gitlab:8930224002": 0,
       "greenhouse:okta:7529446": 0,
-      "greenhouse:mongodb:8107301": 0
+      "greenhouse:mongodb:8107301": 0,
+      "greenhouse:mongodb:8122751": 0,
+      "lever:paytm:8f344c23-43a8-492b-99e9-e9735e2d07a8": 0,
+      "lever:zeta:e21ca17d-7bf2-4781-94bb-bcfc8943aae0": 0,
+      "greenhouse:datadog:7531575": 0,
+      "lever:paytm:388c0e5a-48ba-4a3c-bc44-9356ea7f2db9": 0,
+      "greenhouse:okta:8154916": 0,
+      "greenhouse:databricks:8679980002": 0,
+      "ashby:composio:cceb9883-7967-45a9-8e37-ed72cec3deff": 0,
+      "greenhouse:hackerrank:8281055": 0,
+      "greenhouse:hackerrank:8155938": 0,
+      "greenhouse:gitlab:8864819002": 0,
+      "greenhouse:gitlab:8916232002": 0,
+      "greenhouse:gitlab:8861748002": 0,
+      "greenhouse:rubrik:8282005": 1,
+      "greenhouse:mongodb:8127772": 1,
+      "greenhouse:rubrik:8345283": 0,
+      "ashby:sarvam:bba82f34-1544-421e-a393-3edd8a5f4cb2": 0,
+      "lever:paytm:88e8b698-8f03-4e09-9581-168f831fb3af": 0,
+      "greenhouse:mongodb:8205430": 1,
+      "lever:paytm:95eadc2b-27bf-40fe-b6e6-93aaeadd08f7": 0,
+      "greenhouse:stripe:8031833": 1,
+      "lever:fampay:bbbbbfd2-1855-4991-82d5-84ef57607c24": 1,
+      "lever:paytm:6d7551f7-34c3-46a2-a4e4-18b29f15338c": 0,
+      "lever:paytm:426a6834-1397-4e65-94af-69874c790805": 0,
+      "greenhouse:mongodb:8238617": 0,
+      "lever:paytm:9d497980-2032-440c-8bac-63fb53938acc": 0,
+      "greenhouse:rubrik:8305308": 0,
+      "greenhouse:stripe:8131339": 0,
+      "greenhouse:mongodb:8071475": 0,
+      "greenhouse:gitlab:8928325002": 0,
+      "greenhouse:groww:4970739101": 0,
+      "greenhouse:hackerrank:8121555": 0,
+      "greenhouse:hackerrank:7824249": 0,
+      "greenhouse:okta:8377182": 0,
+      "ashby:sarvam:4c7378a7-6736-4038-b584-f2dc242d756c": 0,
+      "lever:fampay:213870db-ddfd-4519-9a57-54691d89cca5": 0
     },
     "q02": {
       "greenhouse:hackerrank:7693789": 2,
@@ -81,7 +118,15 @@
       "greenhouse:databricks:8421894002": 1,
       "greenhouse:databricks:7495457002": 0,
       "greenhouse:mongodb:8107301": 1,
-      "greenhouse:mongodb:8153125": 1
+      "greenhouse:mongodb:8153125": 1,
+      "greenhouse:gitlab:8615268002": 1,
+      "greenhouse:okta:7781674": 1,
+      "ashby:sarvam:4c7378a7-6736-4038-b584-f2dc242d756c": 3,
+      "greenhouse:gitlab:8916232002": 1,
+      "ashby:sarvam:10a352d0-a65b-4599-8998-e09deef34349": 0,
+      "ashby:composio:a4046674-59ee-41fd-9045-2a7058a467e1": 1,
+      "greenhouse:druva:8564138002": 1,
+      "greenhouse:gitlab:8632446002": 1
     },
     "q03": {
       "greenhouse:airbnb:7592146": 1,
@@ -122,7 +167,12 @@
       "greenhouse:coinbase:8211490": 1,
       "greenhouse:databricks:7958688002": 1,
       "ashby:clickhouse:fe8430ad-2150-4838-ae36-535aa659b389": 2,
-      "ashby:openai:348ac6bf-a5c3-43d1-a14a-5f1a3c8d90fa": 1
+      "ashby:openai:348ac6bf-a5c3-43d1-a14a-5f1a3c8d90fa": 1,
+      "ashby:sarvam:fd9ca9f7-c546-4264-acc6-ee4e58c0e693": 1,
+      "ashby:openai:0a24703f-6108-4422-807e-78831dd98ed1": 1,
+      "greenhouse:coinbase:7739592": 2,
+      "greenhouse:coinbase:8008569": 3,
+      "greenhouse:coinbase:8292793": 3
     },
     "q04": {
       "greenhouse:okta:8242975": 0,
@@ -165,7 +215,17 @@
       "greenhouse:databricks:7630152002": 0,
       "greenhouse:databricks:7651345002": 0,
       "greenhouse:databricks:7651326002": 0,
-      "greenhouse:mongodb:8239745": 0
+      "greenhouse:mongodb:8239745": 0,
+      "greenhouse:okta:8236508": 1,
+      "greenhouse:databricks:8876680002": 1,
+      "greenhouse:twilio:7966928": 0,
+      "greenhouse:elastic:8237463": 2,
+      "greenhouse:okta:8358353": 1,
+      "greenhouse:okta:7593555": 1,
+      "lever:paytm:fffdcfb1-fd6e-4401-b059-500838a6db0e": 0,
+      "greenhouse:okta:7831189": 1,
+      "greenhouse:elastic:8138062": 1,
+      "greenhouse:okta:8242301": 1
     },
     "q05": {
       "greenhouse:hackerrank:7959595": 2,
@@ -209,7 +269,15 @@
       "greenhouse:databricks:7651326002": 1,
       "greenhouse:databricks:7845320002": 1,
       "greenhouse:databricks:8041698002": 1,
-      "greenhouse:databricks:7439442002": 1
+      "greenhouse:databricks:7439442002": 1,
+      "greenhouse:databricks:8438777002": 1,
+      "greenhouse:databricks:7955601002": 1,
+      "greenhouse:databricks:7619810002": 0,
+      "greenhouse:databricks:8876680002": 2,
+      "greenhouse:databricks:8433583002": 0,
+      "greenhouse:databricks:7654349002": 1,
+      "greenhouse:databricks:7845325002": 1,
+      "greenhouse:databricks:8462811002": 0
     },
     "q06": {
       "greenhouse:okta:8242975": 2,
@@ -240,7 +308,17 @@
       "ashby:sarvam:1dd07b8b-0c0b-422a-8ff4-c99bdc5add68": 2,
       "greenhouse:okta:7765038": 1,
       "ashby:atlan:20fe5046-b287-40f6-990f-842ad75526e5": 1,
-      "greenhouse:okta:8081016": 1
+      "greenhouse:okta:8081016": 1,
+      "greenhouse:rubrik:8273834": 0,
+      "greenhouse:databricks:7845334002": 1,
+      "greenhouse:databricks:7647294002": 1,
+      "greenhouse:databricks:7845320002": 1,
+      "lever:fampay:9b8d4eaa-cd29-4aec-8dcc-a33fd78d5657": 1,
+      "ashby:sarvam:e1dd678f-6e25-48b4-82d8-a1a7d10a78d6": 2,
+      "lever:zeta:803792f5-0e9c-45bc-82ce-c0a552ce0cf8": 2,
+      "greenhouse:gitlab:8916232002": 1,
+      "lever:zeta:a83bd184-4c9b-42b8-a6d4-7be310774a6a": 1,
+      "greenhouse:gitlab:8928675002": 0
     },
     "q07": {
       "ashby:openai:21ee6dd3-dcd0-425a-91e9-34a23ab3e434": 1,
@@ -283,7 +361,40 @@
       "ashby:openai:33acf0e2-5c11-46d7-9dc9-417f5537139b": 1,
       "ashby:openai:5ed99d32-eed1-4679-b7b4-037de073e57c": 1,
       "ashby:openai:87e5f8c3-3337-480a-9db2-e4cef5db909b": 1,
-      "greenhouse:mongodb:8107301": 1
+      "greenhouse:mongodb:8107301": 1,
+      "ashby:openai:11c51b12-3ba0-4a7a-a0d2-ed0661324dc3": 1,
+      "ashby:openai:f8b84ae5-743b-41c9-8432-02dff9993d6b": 1,
+      "ashby:clickhouse:7fb1aca5-b7d2-463b-aac0-28b75cfbec7d": 1,
+      "greenhouse:airbnb:7453190": 1,
+      "greenhouse:okta:8263916": 1,
+      "greenhouse:gitlab:8882519002": 0,
+      "greenhouse:coinbase:8337715": 1,
+      "ashby:notion:3fba1c39-c5cb-47d7-9ad2-1cec4d7e9d0c": 1,
+      "ashby:openai:d4780eac-03ad-4dae-861f-99af22b4287e": 1,
+      "greenhouse:rubrik:8349847": 1,
+      "greenhouse:mongodb:8083366": 1,
+      "ashby:notion:2b587e66-deac-421a-a824-9415ba78b5a7": 1,
+      "greenhouse:rubrik:8166537": 1,
+      "ashby:notion:43ffba97-b64a-4c6a-ac13-c803253c9413": 1,
+      "greenhouse:hackerrank:8229735": 1,
+      "greenhouse:rubrik:8166514": 0,
+      "ashby:notion:ea6f01b1-dda2-4b0f-b351-d3e7c5e9c9e9": 0,
+      "greenhouse:stripe:8031833": 1,
+      "lever:fampay:bbbbbfd2-1855-4991-82d5-84ef57607c24": 1,
+      "greenhouse:mongodb:8238617": 1,
+      "greenhouse:mongodb:8205430": 1,
+      "greenhouse:hackerrank:8281055": 1,
+      "greenhouse:anthropic:5481096008": 1,
+      "greenhouse:gitlab:8944779002": 0,
+      "greenhouse:okta:8001002": 0,
+      "greenhouse:gitlab:8632446002": 1,
+      "ashby:openai:80c40695-5cd7-4206-96b6-873158a8e696": 1,
+      "greenhouse:rubrik:8282005": 1,
+      "ashby:elevenlabs:6c4c57c1-ec72-42ba-af3a-eb7aebbde2e6": 1,
+      "ashby:openai:71838fdf-4476-490c-81b6-4bf0746f6774": 1,
+      "ashby:openai:1f99d5d3-4512-4247-aaba-3133a3dabf5a": 1,
+      "ashby:notion:06c2599d-4dd5-4f97-843f-7194b546f042": 1,
+      "ashby:openai:ca54cd23-2bcc-4327-bcb6-46d81ed414a8": 1
     },
     "q08": {
       "lever:paytm:f24d29df-a4ad-4991-ae78-1c5c24c63c75": 2,
@@ -310,7 +421,12 @@
       "lever:paytm:d73b511b-ae92-46f0-9aa1-ac10f2fbb84a": 2,
       "lever:paytm:5dbd7403-b047-48e1-b433-574933914ff3": 1,
       "lever:paytm:41fc393a-8693-4640-bbf2-e72ec3afd8d4": 1,
-      "lever:paytm:6cee2f1c-6cae-4e46-9533-d62283f56734": 1
+      "lever:paytm:6cee2f1c-6cae-4e46-9533-d62283f56734": 1,
+      "greenhouse:gitlab:8905040002": 1,
+      "lever:paytm:5e3ae6dd-e4a3-4cfc-acb7-ae8b9d030cc1": 2,
+      "lever:paytm:afab6a29-2a98-4f63-8b45-f4b0aaefc1b4": 1,
+      "greenhouse:okta:8164066": 1,
+      "ashby:sarvam:6390e602-7b98-4700-baa9-ced5be8b1651": 1
     },
     "q09": {
       "lever:zeta:a83bd184-4c9b-42b8-a6d4-7be310774a6a": 2,
@@ -344,7 +460,10 @@
       "greenhouse:databricks:8433583002": 1,
       "greenhouse:okta:7741663": 1,
       "greenhouse:airbnb:8312713": 0,
-      "greenhouse:rubrik:8161018": 1
+      "greenhouse:rubrik:8161018": 1,
+      "greenhouse:coinbase:8165441": 1,
+      "greenhouse:coinbase:8167571": 1,
+      "greenhouse:rubrik:8349850": 1
     },
     "q10": {
       "greenhouse:okta:8113501": 0,
@@ -384,7 +503,15 @@
       "greenhouse:okta:7529446": 0,
       "greenhouse:hackerrank:8155938": 0,
       "greenhouse:mongodb:8106167": 0,
-      "greenhouse:twilio:7781659": 1
+      "greenhouse:twilio:7781659": 1,
+      "greenhouse:hackerrank:8229735": 1,
+      "greenhouse:hackerrank:8242584": 0,
+      "greenhouse:okta:7892783": 0,
+      "greenhouse:mongodb:8323897": 0,
+      "greenhouse:mongodb:8127772": 0,
+      "greenhouse:okta:8229910": 0,
+      "ashby:sarvam:4c7378a7-6736-4038-b584-f2dc242d756c": 0,
+      "greenhouse:hackerrank:7693789": 0
     },
     "q11": {
       "greenhouse:rubrik:8273834": 2,
@@ -424,7 +551,13 @@
       "ashby:openai:112e34f2-45da-4a08-adf4-cc29398938df": 3,
       "ashby:openai:eacbd123-83fb-42c6-a5d5-e914b8e135b8": 3,
       "ashby:openai:c8d3feee-2b6a-4ef7-b8c0-90bbd1381c1f": 2,
-      "ashby:openai:783704d7-5afa-45aa-899b-1d6799f73004": 2
+      "ashby:openai:783704d7-5afa-45aa-899b-1d6799f73004": 2,
+      "ashby:clickhouse:03b2433e-6a7b-4f79-a75e-c7371365d527": 3,
+      "ashby:openai:02ec1893-17df-420c-8d19-48eca8edd884": 2,
+      "greenhouse:anthropic:5424310008": 1,
+      "greenhouse:anthropic:5443882008": 1,
+      "greenhouse:anthropic:5461252008": 1,
+      "ashby:elevenlabs:b8a111fa-9fd5-44d0-97ed-8fd1280be4ef": 3
     },
     "q12": {
       "greenhouse:okta:7765038": 1,
@@ -465,7 +598,16 @@
       "greenhouse:hackerrank:7959595": 1,
       "greenhouse:mongodb:8007613": 0,
       "greenhouse:okta:7685798": 0,
-      "greenhouse:mongodb:8323897": 3
+      "greenhouse:mongodb:8323897": 3,
+      "greenhouse:druva:8564138002": 1,
+      "greenhouse:okta:8236530": 1,
+      "greenhouse:okta:8377182": 0,
+      "ashby:sarvam:d71ec2a3-3de6-4380-95f6-41cfc2bbdbf2": 1,
+      "ashby:sarvam:ae7aa8a8-1f60-45f2-ac9d-09b48d4adbef": 1,
+      "greenhouse:druva:7892681002": 1,
+      "greenhouse:mongodb:8383063": 0,
+      "greenhouse:okta:8053763": 1,
+      "greenhouse:databricks:7955601002": 1
     },
     "q13": {
       "greenhouse:hackerrank:7959595": 0,
@@ -504,7 +646,13 @@
       "greenhouse:hackerrank:8358510": 0,
       "lever:paytm:36be80ec-3701-4d0f-8048-7571e3bd3a56": 1,
       "greenhouse:stripe:7230670": 0,
-      "greenhouse:stripe:8245230": 1
+      "greenhouse:stripe:8245230": 1,
+      "greenhouse:databricks:8795446002": 1,
+      "greenhouse:hackerrank:8281055": 1,
+      "ashby:sarvam:2dcb062d-e42b-408d-be15-59ddde900984": 1,
+      "lever:fampay:811d4537-ade2-43fa-83c5-e2d07839b402": 1,
+      "greenhouse:databricks:7841778002": 1,
+      "greenhouse:hackerrank:8146911": 1
     },
     "q14": {
       "greenhouse:okta:8242975": 1,
@@ -545,7 +693,16 @@
       "greenhouse:mongodb:8153125": 0,
       "greenhouse:databricks:7601565002": 1,
       "greenhouse:okta:8081016": 2,
-      "greenhouse:gitlab:8781299002": 1
+      "greenhouse:gitlab:8781299002": 1,
+      "greenhouse:mongodb:8008794": 0,
+      "greenhouse:hackerrank:7461142": 0,
+      "lever:zeta:a83bd184-4c9b-42b8-a6d4-7be310774a6a": 2,
+      "greenhouse:databricks:7601572002": 1,
+      "greenhouse:gitlab:8730125002": 1,
+      "greenhouse:gitlab:8800489002": 2,
+      "greenhouse:okta:8102369": 2,
+      "greenhouse:databricks:7647369002": 1,
+      "greenhouse:elastic:7447426": 1
     },
     "q15": {
       "greenhouse:okta:8232605": 3,
@@ -579,7 +736,11 @@
       "greenhouse:databricks:8439350002": 0,
       "greenhouse:mongodb:8106167": 0,
       "greenhouse:mongodb:8083366": 0,
-      "greenhouse:mongodb:8055422": 0
+      "greenhouse:mongodb:8055422": 0,
+      "greenhouse:okta:8229910": 1,
+      "greenhouse:okta:7892783": 1,
+      "greenhouse:okta:8377182": 0,
+      "greenhouse:okta:8358096": 0
     },
     "q16": {
       "greenhouse:gitlab:8629019002": 1,
@@ -617,7 +778,12 @@
       "greenhouse:twilio:8028473": 1,
       "greenhouse:datadog:8222279": 1,
       "greenhouse:hackerrank:6993983": 1,
-      "greenhouse:rubrik:8196573": 1
+      "greenhouse:rubrik:8196573": 1,
+      "greenhouse:databricks:7845334002": 1,
+      "greenhouse:stripe:8326577": 1,
+      "greenhouse:rubrik:8398152": 1,
+      "lever:paytm:715e52dd-0a51-4ff7-be68-855112e56b99": 2,
+      "lever:zeta:b099e4fe-87cf-44ad-89b6-21edfe60958b": 0
     },
     "q17": {
       "greenhouse:gitlab:8853843002": 1,
@@ -660,7 +826,16 @@
       "greenhouse:hackerrank:7959595": 1,
       "greenhouse:stripe:8352150": 0,
       "greenhouse:mongodb:8234586": 1,
-      "greenhouse:mongodb:8383063": 1
+      "greenhouse:mongodb:8383063": 1,
+      "greenhouse:gitlab:8882519002": 0,
+      "ashby:elevenlabs:e53c5be6-5c1a-4870-ad85-8397a1f201de": 1,
+      "lever:fampay:01750a61-a53b-433f-8d8c-bfb5a18417f8": 1,
+      "greenhouse:coinbase:8286487": 2,
+      "ashby:clickhouse:a68db3e5-0ec3-472a-8597-8586f40d43a5": 2,
+      "greenhouse:stripe:7230670": 1,
+      "ashby:clickhouse:fd1e8b68-744d-480b-b38c-42ee999ecc6e": 2,
+      "lever:zeta:32ea9654-98a8-445b-98ef-e6ada520d35a": 1,
+      "ashby:clickhouse:12eb05d0-98a6-46e2-a100-b637f534849c": 2
     },
     "q18": {
       "greenhouse:mongodb:8230883": 2,
@@ -697,7 +872,12 @@
       "greenhouse:anthropic:5421566008": 1,
       "ashby:openai:5ebd5f66-75db-4a96-8d39-babc14f1c582": 1,
       "greenhouse:twilio:8396809": 1,
-      "greenhouse:mongodb:8120184": 0
+      "greenhouse:mongodb:8120184": 0,
+      "greenhouse:coinbase:8366842": 0,
+      "greenhouse:gitlab:8773028002": 0,
+      "greenhouse:gitlab:8646544002": 0,
+      "greenhouse:gitlab:8781299002": 0,
+      "ashby:openai:4cbbf0b1-7c0b-4c42-bf38-48377f847e91": 0
     },
     "q19": {
       "greenhouse:mongodb:8106167": 2,
@@ -737,7 +917,13 @@
       "greenhouse:databricks:8619213002": 1,
       "greenhouse:databricks:7845334002": 0,
       "greenhouse:databricks:7845320002": 1,
-      "greenhouse:databricks:8041698002": 1
+      "greenhouse:databricks:8041698002": 1,
+      "greenhouse:okta:8124367": 2,
+      "lever:meesho:cb16706c-296f-4567-a41f-86206a54ee29": 1,
+      "greenhouse:databricks:8630019002": 1,
+      "greenhouse:okta:8242296": 2,
+      "greenhouse:stripe:8386610": 2,
+      "greenhouse:okta:8037616": 2
     },
     "q20": {
       "greenhouse:airbnb:8081180": 0,
@@ -779,7 +965,43 @@
       "greenhouse:mongodb:8055422": 0,
       "greenhouse:rubrik:8305308": 0,
       "lever:paytm:84ffd393-c82b-484c-9a88-9f9ddef1b720": 0,
-      "greenhouse:anthropic:5443882008": 0
+      "greenhouse:anthropic:5443882008": 0,
+      "lever:paytm:426a6834-1397-4e65-94af-69874c790805": 0,
+      "greenhouse:okta:8323989": 0,
+      "lever:fampay:bbbbbfd2-1855-4991-82d5-84ef57607c24": 1,
+      "lever:paytm:95eadc2b-27bf-40fe-b6e6-93aaeadd08f7": 0,
+      "greenhouse:hackerrank:8229735": 3,
+      "ashby:clickhouse:a68db3e5-0ec3-472a-8597-8586f40d43a5": 1,
+      "ashby:sarvam:fcb15601-6440-41f7-aa79-b9992057a4b2": 1,
+      "lever:paytm:8f344c23-43a8-492b-99e9-e9735e2d07a8": 0,
+      "lever:zeta:4a278744-a77e-4c34-91e5-6247ec99fe11": 0,
+      "ashby:sarvam:7d2faba2-21a1-4a8a-aff5-f708a6959195": 1,
+      "greenhouse:anthropic:5426651008": 0,
+      "greenhouse:okta:8345798": 0,
+      "greenhouse:hackerrank:8281055": 1,
+      "greenhouse:okta:7960157": 0,
+      "greenhouse:rubrik:8166514": 1,
+      "greenhouse:mongodb:8327106": 0,
+      "greenhouse:hackerrank:8155938": 1,
+      "greenhouse:rubrik:8345283": 1,
+      "greenhouse:mongodb:8201518": 0,
+      "greenhouse:mongodb:7318558": 0,
+      "greenhouse:rubrik:7956918": 1,
+      "greenhouse:stripe:8131339": 0,
+      "ashby:sarvam:bba82f34-1544-421e-a393-3edd8a5f4cb2": 0,
+      "lever:paytm:74ce5d90-26b5-41b5-81dc-2ba5b862da60": 0,
+      "greenhouse:mongodb:8205430": 1,
+      "lever:paytm:7da6d28a-6f4b-4d70-975b-5e358f1b3af0": 0,
+      "greenhouse:mongodb:8238617": 1,
+      "lever:paytm:715e52dd-0a51-4ff7-be68-855112e56b99": 0,
+      "lever:paytm:9d497980-2032-440c-8bac-63fb53938acc": 0,
+      "greenhouse:rubrik:8282005": 1,
+      "greenhouse:groww:4880153101": 0,
+      "lever:paytm:0ecd9d93-e4f3-4dd0-a22e-852fec9b6e02": 0,
+      "lever:paytm:fffdcfb1-fd6e-4401-b059-500838a6db0e": 0,
+      "greenhouse:stripe:8364868": 0,
+      "greenhouse:stripe:8237526": 0,
+      "lever:fampay:df8548ac-a0e4-4cd6-a97c-427231b4b3e9": 1
     }
   }
 }

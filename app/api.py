@@ -22,12 +22,14 @@ from app.db import close_pools, connection, get_pool
 from app.embeddings import embed_query
 from app.ingest.cities import FEATURED
 from app.llm import LLMError, get_llm
-from app.models import Preferences, ScoredJob, SearchFilters
-from app.profile import ResumeError, extract_profile, pdf_to_text
+from app.models import CandidateProfile, Preferences, ScoredJob, SearchFilters
+from app.profile import ResumeError, clean_profile, extract_profile, pdf_to_text
+from app.query import parse_query
 
 log = logging.getLogger("api")
 STATIC = Path(__file__).with_name("static")
 MAX_UPLOAD = 2 * 1024 * 1024
+MAX_RESULTS = 100  # "Load more" asks for 20 more each time
 
 
 @asynccontextmanager
@@ -86,7 +88,7 @@ def job_out(r: ScoredJob) -> dict:
         "id": j.id, "title": j.title, "company": j.company, "location": j.location, "remote": j.is_remote,
         "india": j.is_india, "url": j.url, "department": j.department, "source": j.source,
         "posted_at": j.posted_at.isoformat() if j.posted_at else None, "posted_at_source": j.posted_at_source,
-        "cities": j.cities,
+        "cities": j.cities, "skills": j.skills, "min_years": j.min_years, "matched_skills": r.matched_skills,
         "snippet": j.description[:280], "score": round(r.score, 5), "reason": r.reason,
         "keyword_rank": r.keyword_rank, "vector_rank": r.vector_rank,
     }
@@ -159,17 +161,34 @@ def upload_profile(  # sync on purpose: DB + LLM calls run in FastAPI's threadpo
     file: UploadFile | None = File(default=None),
     text: str | None = Form(default=None),
 ):
+    llm, pdf = get_llm(), None
     if file is not None:
-        data = file.file.read(MAX_UPLOAD + 1)
-        if len(data) > MAX_UPLOAD:
+        pdf = file.file.read(MAX_UPLOAD + 1)
+        if len(pdf) > MAX_UPLOAD:
             raise HTTPException(413, "Resume must be under 2 MB.")
-        resume = pdf_to_text(data)
+        try:
+            resume = pdf_to_text(pdf)
+        except ResumeError:
+            # A scanned resume has no text layer, but a model that reads PDFs can still use it.
+            if not (pdf.startswith(b"%PDF") and hasattr(llm, "structured_pdf")):
+                raise
+            resume = None
     elif text:
         resume = text
     else:
         raise HTTPException(400, "Send a PDF file or resume text.")
     store.charge_llm_call(conn, user, get_settings().daily_llm_limit)
-    profile = extract_profile(get_llm(), resume)  # the raw resume is never stored
+    profile = extract_profile(llm, resume, pdf=pdf)  # the raw resume is never stored
+    store.save_profile(conn, user, profile, embed_query(profile.as_search_text()))
+    return {"profile": profile, "preferences": store.get_preferences(conn, user)}
+
+
+@app.put("/api/profile")
+def edit_profile(conn: Conn, user: User, profile: CandidateProfile):
+    """Save a profile the user corrected (skills, roles, level). No AI call: only the embedding is redone."""
+    profile = clean_profile(profile)
+    if not profile.skills and not profile.target_roles:
+        raise HTTPException(422, "Add at least one skill or target role.")
     store.save_profile(conn, user, profile, embed_query(profile.as_search_text()))
     return {"profile": profile, "preferences": store.get_preferences(conn, user)}
 
@@ -193,28 +212,34 @@ _rec_cache: dict[tuple, tuple[float, list[dict]]] = {}
 def recommendations(
     conn: Conn,
     user: User,
-    limit: int = Query(20, ge=1, le=50),
+    limit: int = Query(20, ge=1, le=MAX_RESULTS),
     rerank: bool = True,
     posted_within_days: int | None = Query(None, ge=1, le=30),
     include_undated: bool = False,
+    india_only: bool = False,
+    remote_only: bool = False,
+    cities: Annotated[list[str], Query()] = [],
 ):
     profile, vector = store.get_profile(conn, user)
     if profile is None:
         raise HTTPException(409, "Upload a resume first.")
     prefs = store.get_preferences(conn, user)
     dismissed = store.feedback_ids(conn, user, "dismiss")
-    # Same user + profile + preferences + hidden jobs => same reranked feed; don't pay for it again.
+    saved = store.feedback_ids(conn, user, "save")  # saves reshape the feed too (search.personal_vector)
+    # Same user + profile + preferences + feedback => same reranked feed; don't pay for it again.
     days = window_days(posted_within_days, prefs)
-    key = (user, limit, days, include_undated, profile.model_dump_json(), prefs.model_dump_json(),
-           tuple(sorted(dismissed)))
+    key = (user, limit, days, include_undated, india_only, remote_only, tuple(sorted(cities)),
+           profile.model_dump_json(), prefs.model_dump_json(), tuple(sorted(dismissed)), tuple(sorted(saved)))
     if rerank and (hit := _rec_cache.get(key)) and time.monotonic() - hit[0] < REC_TTL:
         return {"jobs": hit[1], "cached": True}
     llm = None
     if rerank:
-        store.charge_llm_call(conn, user, get_settings().daily_llm_limit)
+        store.charge_llm_call(conn, user, get_settings().daily_llm_limit, calls=search.rerank_calls())
         llm = get_llm()
-    filters = SearchFilters(exclude_job_ids=dismissed, posted_within_days=days, include_undated=include_undated)
-    results = search.recommend(conn, profile, vector, prefs=prefs, filters=filters, limit=limit, llm=llm)
+    filters = SearchFilters(exclude_job_ids=dismissed, posted_within_days=days, include_undated=include_undated,
+                            india_only=india_only, remote_only=remote_only, cities=cities)
+    results = search.recommend(conn, profile, vector, prefs=prefs, filters=filters, limit=limit, llm=llm,
+                               user_id=user)
     jobs = [job_out(r) for r in results]
     if rerank:
         if len(_rec_cache) > 500:  # crude bound; entries are small and expire anyway
@@ -235,7 +260,8 @@ def search_jobs(
     posted_within_days: int | None = Query(None, ge=1, le=30),
     include_undated: bool = False,
     sort: search.Sort = "relevance",
-    limit: int = Query(20, ge=1, le=50),
+    limit: int = Query(20, ge=1, le=MAX_RESULTS),
+    parse: bool = True,
     x_user_id: Annotated[str | None, Header()] = None,
 ):
     prefs, dismissed, profile, llm = None, [], None, None
@@ -244,38 +270,69 @@ def search_jobs(
         prefs = store.get_preferences(conn, x_user_id)
         dismissed = store.feedback_ids(conn, x_user_id, "dismiss")
         profile, _ = store.get_profile(conn, x_user_id)
+    understood = None
+    if parse and (pq := parse_query(q)).has_filters:  # "remote backend jobs in pune" -> "backend" + filters
+        cities = [*cities, *(c for c in pq.cities if c not in cities)]
+        remote_only, india_only = remote_only or pq.remote, india_only or pq.india
+        # Only filters, no role ("jobs in pune"): rank on the resume if there is one.
+        q = pq.text or (search.profile_query(profile, prefs) if profile else q)
+        understood = {"query": pq.text, "cities": pq.cities, "remote": pq.remote, "india": pq.india}
     if sort == "newest" and method == "hybrid_rerank":
         method = "hybrid"  # a date-ordered list gains nothing from an LLM relevance pass; don't charge for one
     if method == "hybrid_rerank":
         if not known_user:
             raise HTTPException(401, "Reranking needs a user (X-User-Id).")
-        store.charge_llm_call(conn, x_user_id, get_settings().daily_llm_limit)
+        store.charge_llm_call(conn, x_user_id, get_settings().daily_llm_limit, calls=search.rerank_calls())
         llm = get_llm()
     filters = SearchFilters(india_only=india_only, remote_only=remote_only, location=location, cities=cities,
                             posted_within_days=window_days(posted_within_days, prefs),
                             include_undated=include_undated, exclude_job_ids=dismissed)
     results = search.search(conn, q, method=method, filters=filters, prefs=prefs, limit=limit, llm=llm,
                             profile=profile, sort=sort)
-    return {"jobs": [job_out(r) for r in results]}
+    return {"jobs": [job_out(r) for r in results], "understood": understood}
+
+
+DismissReason = Literal["senior", "location", "field", "company", "other"]
+Status = Literal["saved", "applied", "interviewing", "offer", "rejected"]
 
 
 class FeedbackIn(BaseModel):
     job_id: str
     action: Literal["save", "dismiss", "clear"]
+    reason: DismissReason | None = None  # why a job was dismissed
 
 
 @app.post("/api/feedback")
 def feedback(conn: Conn, user: User, body: FeedbackIn):
     if body.action == "clear":
         store.clear_feedback(conn, user, body.job_id)
-    elif not store.record_feedback(conn, user, body.job_id, body.action):
+        return {"ok": True}
+    if not store.record_feedback(conn, user, body.job_id, body.action, reason=body.reason):
         raise HTTPException(404, "Unknown job.")
-    return {"ok": True}
+    out: dict = {"ok": True}
+    if body.action == "dismiss" and body.reason == "company":  # "not this company" is durable: remember it
+        job = store.get_job(conn, body.job_id)
+        out["preferences"] = store.update_preferences(conn, user, {"avoid_companies": [job.company]})
+    return out
 
 
 @app.get("/api/saved")
 def saved(conn: Conn, user: User):
-    return {"jobs": [job_out(ScoredJob(job=j, score=0)) for j in store.saved_jobs(conn, user)]}
+    status = store.saved_status(conn, user)
+    return {"jobs": [{**job_out(ScoredJob(job=j, score=0)), "status": status.get(j.id) or "saved"}
+                     for j in store.saved_jobs(conn, user)]}
+
+
+class StatusIn(BaseModel):
+    status: Status
+
+
+@app.put("/api/saved/{job_id}")
+def set_saved_status(conn: Conn, user: User, job_id: str, body: StatusIn):
+    """Application tracker: where a saved job stands (applied, interviewing, ...)."""
+    if not store.set_status(conn, user, job_id, body.status):
+        raise HTTPException(404, "That job isn't saved.")
+    return {"ok": True, "status": body.status}
 
 
 @app.get("/api/jobs/{job_id}")
